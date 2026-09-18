@@ -23,4 +23,17 @@ class CreateLogEntryRequestTest {
                 .extracting(violation -> violation.getPropertyPath().toString())
                 .containsExactlyInAnyOrder("timestamp", "serviceName", "environment", "severity", "message", "host");
     }
+
+    @Test
+    void rejectsValuesLongerThanDatabaseColumns() {
+        CreateLogEntryRequest request = new CreateLogEntryRequest(
+                java.time.Instant.now(), "s".repeat(256), "e".repeat(65),
+                dev.loganalyzer.entity.Severity.INFO, "message", "t".repeat(256), "h".repeat(256), null);
+
+        Set<ConstraintViolation<CreateLogEntryRequest>> violations = validator.validate(request);
+
+        assertThat(violations)
+                .extracting(violation -> violation.getPropertyPath().toString())
+                .containsExactlyInAnyOrder("serviceName", "environment", "traceId", "host");
+    }
 }

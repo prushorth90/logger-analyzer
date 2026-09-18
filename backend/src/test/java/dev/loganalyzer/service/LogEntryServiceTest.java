@@ -2,6 +2,7 @@ package dev.loganalyzer.service;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 
 import dev.loganalyzer.dto.CreateLogEntryRequest;
 import dev.loganalyzer.dto.LogEntryResponse;
@@ -40,5 +41,16 @@ class LogEntryServiceTest {
         assertThat(response.traceId()).isEqualTo("trace-123");
         assertThat(response.host()).isEqualTo("billing-01");
         assertThat(response.metadata()).isEqualTo(metadata);
+    }
+
+    @Test
+    void returnsEmptyWhenLogEntryDoesNotExist() {
+        LogEntryRepository repository = mock(LogEntryRepository.class);
+        LogEntryService service = new LogEntryService(repository);
+        UUID id = UUID.randomUUID();
+        when(repository.findById(id)).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.findById(id)).isEmpty();
+        verify(repository).findById(id);
     }
 }

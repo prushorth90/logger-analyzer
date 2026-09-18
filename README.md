@@ -1,6 +1,6 @@
 # Log Analyzer
 
-A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, and PostgreSQL. This first increment establishes the application foundation and an end-to-end health check. It does not ingest or analyze logs yet.
+A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, and PostgreSQL. It provides an end-to-end health check and synchronous REST log ingestion backed by PostgreSQL.
 
 ## Start with Docker Compose
 
@@ -84,7 +84,37 @@ backend/
 docker-compose.yml
 ```
 
-The `LogEntry` entity, repository, and empty `log_entries` table establish the persistence layer only. No ingestion endpoint, sample logs, search, or analysis features are implemented. Flyway owns schema changes; Hibernate validates the schema at startup.
+The `LogEntry` entity and repository persist logs submitted through `POST /api/logs`. Search and analysis features are not implemented. Flyway owns schema changes; Hibernate validates the schema at startup.
+
+## Ingest Logs
+
+`POST /api/logs` accepts JSON and returns HTTP 201 with the saved log and a `Location` header. Required fields are `timestamp`, `serviceName`, `environment`, `severity`, `message`, and `host`. `severity` must be `DEBUG`, `INFO`, `WARN`, or `ERROR`; `traceId` and `metadata` are optional.
+
+Send an INFO log:
+
+```sh
+curl --fail-with-body -X POST http://localhost:8080/api/logs \
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp":"2026-09-17T12:00:00Z","serviceName":"catalog-api","environment":"development","severity":"INFO","message":"Catalog refresh completed","host":"catalog-01","metadata":{"itemCount":128}}'
+```
+
+Send a WARN log:
+
+```sh
+curl --fail-with-body -X POST http://localhost:8080/api/logs \
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp":"2026-09-17T12:01:00Z","serviceName":"checkout-api","environment":"staging","severity":"WARN","message":"Payment provider response was slow","traceId":"trace-456","host":"checkout-02","metadata":{"durationMs":2400}}'
+```
+
+Send an ERROR log:
+
+```sh
+curl --fail-with-body -X POST http://localhost:8080/api/logs \
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp":"2026-09-17T12:02:00Z","serviceName":"billing-api","environment":"production","severity":"ERROR","message":"Payment capture failed","traceId":"trace-789","host":"billing-01","metadata":{"provider":"example-pay","retryable":true}}'
+```
+
+Invalid JSON or validation failures return HTTP 400 with field details where available. Unexpected failures return HTTP 500 with a generic message; server details remain in backend logs.
 
 ## Health Contract
 
@@ -143,7 +173,7 @@ cd backend
 mvn test
 ```
 
-Backend unit tests do not require a database. `docker compose build` executes both projects' tests in their specified build environments. The live Compose health check validates real PostgreSQL connectivity and migration startup.
+Backend unit tests do not require a database. Controller integration tests use Testcontainers and require a running Docker daemon. `docker compose build` executes both projects' tests in their specified build environments. The live Compose health check validates real PostgreSQL connectivity and migration startup.
 
 To check outage handling on this disposable development stack, stop PostgreSQL with `docker compose stop postgres`, refresh the UI, and expect HTTP 503 with database status `DOWN`. Restore it with `docker compose up -d --wait postgres backend frontend`. The backend reconnects without a rebuild.
 
