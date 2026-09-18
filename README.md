@@ -116,6 +116,29 @@ curl --fail-with-body -X POST http://localhost:8080/api/logs \
 
 Invalid JSON or validation failures return HTTP 400 with field details where available. Unexpected failures return HTTP 500 with a generic message; server details remain in backend logs.
 
+### Generate development traffic
+
+The dependency-free generator in `tools/log-generator` sends realistic logs from payment, order, user, and inventory services. It supports normal traffic, elevated warnings, database timeouts, payment failures, and periodic error spikes.
+
+Run it from the command line with Node.js 22+:
+
+```sh
+node tools/log-generator/generator.js --scenario normal --rps 10 --duration 60
+```
+
+When `BACKEND_PORT` is customized, pass the published port explicitly, for example `--url http://127.0.0.1:8088/api/logs`.
+
+Run it in Docker Compose against the Compose backend:
+
+```sh
+LOG_SCENARIO=error-spike LOG_RPS=20 LOG_DURATION=60 \
+  docker compose --profile generator up --build log-generator
+```
+
+`LOG_DURATION=0` runs continuously until stopped. Configure services with `--services payment-service,order-service` or `LOG_SERVICES`; configure severity-specific text with `--messages-file tools/log-generator/messages.example.json`. Available scenarios are `normal`, `warnings`, `database-timeouts`, `payment-failures`, and `error-spike`. Run `node tools/log-generator/generator.js --help` for all CLI and environment options.
+
+Open the dashboard while traffic is running and use **Refresh** on the Overview or Logs page to see the latest data.
+
 ## Operational Overview
 
 `GET /api/logs/overview` requires `startTimestamp` and `endTimestamp` ISO-8601 query parameters. The period is half-open: the start is included and the end is excluded. PostgreSQL returns total logs, ERROR and WARN counts, active services, logs grouped by service and severity, hourly log volume, and errors grouped by service using bounded `GROUP BY` queries.

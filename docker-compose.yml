@@ -1,6 +1,21 @@
 name: log-analyzer
 
 services:
+  log-generator:
+    build:
+      context: ./tools/log-generator
+    profiles: ["generator"]
+    environment:
+      LOG_API_URL: http://backend:8080/api/logs
+      LOG_DURATION: ${LOG_DURATION:-0}
+      LOG_ENVIRONMENT: ${LOG_ENVIRONMENT:-development}
+      LOG_RPS: ${LOG_RPS:-5}
+      LOG_SCENARIO: ${LOG_SCENARIO:-normal}
+      LOG_SERVICES: ${LOG_SERVICES:-payment-service,order-service,user-service,inventory-service}
+    depends_on:
+      backend:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend

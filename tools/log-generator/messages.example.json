@@ -1,0 +1,18 @@
+{
+  "DEBUG": [
+    "Resolved feature flags for {operation}",
+    "Cache lookup completed in {durationMs} ms"
+  ],
+  "INFO": [
+    "Completed {operation} successfully in {durationMs} ms",
+    "Published {operation} event to downstream consumers"
+  ],
+  "WARN": [
+    "Retrying {operation} after a transient failure",
+    "Downstream request exceeded the {thresholdMs} ms warning threshold"
+  ],
+  "ERROR": [
+    "Failed to complete {operation} after 3 attempts",
+    "Database query timed out after {thresholdMs} ms"
+  ]
+}
