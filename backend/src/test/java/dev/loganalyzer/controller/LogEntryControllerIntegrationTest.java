@@ -1,5 +1,10 @@
 package dev.loganalyzer.controller;
 
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+
+import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.repository.LogEntryRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +21,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -107,4 +113,67 @@ class LogEntryControllerIntegrationTest {
                 .andExpect(jsonPath("$.message").value("Malformed JSON request"))
                 .andExpect(jsonPath("$.fieldErrors").isEmpty());
     }
+
+            @Test
+            void filtersLogsByCombinedCriteria() throws Exception {
+            repository.saveAll(List.of(
+                log("2026-09-17T12:00:00Z", "billing-api", "production", Severity.ERROR,
+                    "Payment FAILED for order 42", "trace-123"),
+                log("2026-09-17T12:05:00Z", "billing-api", "production", Severity.INFO,
+                    "Payment accepted", "trace-123"),
+                log("2026-09-17T12:10:00Z", "orders-api", "staging", Severity.ERROR,
+                    "Payment failed", "trace-999")));
+
+            mockMvc.perform(get("/api/logs")
+                    .param("serviceName", "billing-api")
+                    .param("environment", "production")
+                    .param("severity", "ERROR")
+                    .param("traceId", "trace-123")
+                    .param("startTimestamp", "2026-09-17T11:59:00Z")
+                    .param("endTimestamp", "2026-09-17T12:01:00Z")
+                    .param("search", "failed"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].message").value("Payment FAILED for order 42"))
+                .andExpect(jsonPath("$.pageNumber").value(0))
+                .andExpect(jsonPath("$.pageSize").value(20))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.totalRecords").value(1));
+            }
+
+            @Test
+            void paginatesWithNewestLogsFirstByDefault() throws Exception {
+            repository.saveAll(List.of(
+                log("2026-09-17T12:00:00Z", "billing-api", "production", Severity.INFO, "Oldest", null),
+                log("2026-09-17T12:05:00Z", "orders-api", "production", Severity.WARN, "Middle", null),
+                log("2026-09-17T12:10:00Z", "auth-api", "production", Severity.ERROR, "Newest", null)));
+
+            mockMvc.perform(get("/api/logs").param("page", "0").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].message").value("Newest"))
+                .andExpect(jsonPath("$.content[1].message").value("Middle"))
+                .andExpect(jsonPath("$.pageNumber").value(0))
+                .andExpect(jsonPath("$.pageSize").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.totalRecords").value(3));
+            }
+
+            @Test
+            void sortsByRequestedFieldAndDirection() throws Exception {
+            repository.saveAll(List.of(
+                log("2026-09-17T12:00:00Z", "orders-api", "production", Severity.INFO, "Orders", null),
+                log("2026-09-17T12:05:00Z", "auth-api", "production", Severity.INFO, "Auth", null)));
+
+            mockMvc.perform(get("/api/logs").param("sort", "serviceName,asc"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].serviceName").value("auth-api"))
+                .andExpect(jsonPath("$.content[1].serviceName").value("orders-api"));
+            }
+
+            private LogEntry log(String timestamp, String serviceName, String environment, Severity severity,
+                String message, String traceId) {
+            return new LogEntry(Instant.parse(timestamp), serviceName, environment, severity, message, traceId,
+                serviceName + "-01", Map.of());
+            }
 }
