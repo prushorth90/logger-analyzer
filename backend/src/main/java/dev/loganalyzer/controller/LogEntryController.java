@@ -5,6 +5,7 @@ import java.time.Instant;
 
 import dev.loganalyzer.dto.CreateLogEntryRequest;
 import dev.loganalyzer.dto.LogEntryResponse;
+import dev.loganalyzer.dto.LogOverviewResponse;
 import dev.loganalyzer.dto.PagedLogEntryResponse;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.service.LogEntryService;
@@ -41,6 +42,13 @@ public class LogEntryController {
             @PageableDefault(size = 20, sort = "timestamp", direction = Sort.Direction.DESC) Pageable pageable) {
         return logEntryService.findAll(serviceName, environment, severity, traceId, startTimestamp, endTimestamp,
                 search, pageable);
+    }
+
+    @GetMapping("/overview")
+    public LogOverviewResponse getOverview(
+            @RequestParam Instant startTimestamp,
+            @RequestParam Instant endTimestamp) {
+        return logEntryService.getOverview(startTimestamp, endTimestamp);
     }
 
     @PostMapping

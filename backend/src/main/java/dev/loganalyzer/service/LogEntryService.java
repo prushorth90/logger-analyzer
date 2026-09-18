@@ -1,15 +1,22 @@
 package dev.loganalyzer.service;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
 import dev.loganalyzer.dto.CreateLogEntryRequest;
 import dev.loganalyzer.dto.LogEntryResponse;
+import dev.loganalyzer.dto.LogOverviewResponse;
+import dev.loganalyzer.dto.LogOverviewResponse.NamedCount;
+import dev.loganalyzer.dto.LogOverviewResponse.TimeCount;
 import dev.loganalyzer.dto.PagedLogEntryResponse;
 import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.repository.LogEntrySpecifications;
+import dev.loganalyzer.repository.LogOverviewSummary;
+import dev.loganalyzer.repository.NamedCountProjection;
+import dev.loganalyzer.repository.TimeCountProjection;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -35,14 +42,14 @@ public class LogEntryService {
         return logEntryRepository.findById(id).map(this::toResponse);
     }
 
-        @Transactional(readOnly = true)
-        public PagedLogEntryResponse findAll(
+    @Transactional(readOnly = true)
+    public PagedLogEntryResponse findAll(
             String serviceName,
             String environment,
             Severity severity,
             String traceId,
-            java.time.Instant startTimestamp,
-            java.time.Instant endTimestamp,
+            Instant startTimestamp,
+            Instant endTimestamp,
             String search,
             Pageable pageable) {
         Page<LogEntryResponse> page = logEntryRepository.findAll(
@@ -52,7 +59,39 @@ public class LogEntryService {
             .map(this::toResponse);
         return new PagedLogEntryResponse(page.getContent(), page.getNumber(), page.getSize(),
             page.getTotalPages(), page.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public LogOverviewResponse getOverview(Instant startTimestamp, Instant endTimestamp) {
+        if (!startTimestamp.isBefore(endTimestamp)) {
+            throw new IllegalArgumentException("startTimestamp must be before endTimestamp");
         }
+
+        LogOverviewSummary summary = logEntryRepository.summarize(startTimestamp, endTimestamp);
+        return new LogOverviewResponse(
+                startTimestamp,
+                endTimestamp,
+                summary.getTotalLogs(),
+                summary.getErrorCount(),
+                summary.getWarningCount(),
+                summary.getActiveServices(),
+                logEntryRepository.countByService(startTimestamp, endTimestamp).stream()
+                        .map(this::toNamedCount).toList(),
+                logEntryRepository.countBySeverity(startTimestamp, endTimestamp).stream()
+                        .map(this::toNamedCount).toList(),
+                logEntryRepository.countByHour(startTimestamp, endTimestamp).stream()
+                        .map(this::toTimeCount).toList(),
+                logEntryRepository.countErrorsByService(startTimestamp, endTimestamp).stream()
+                        .map(this::toNamedCount).toList());
+    }
+
+    private NamedCount toNamedCount(NamedCountProjection projection) {
+        return new NamedCount(projection.getName(), projection.getCount());
+    }
+
+    private TimeCount toTimeCount(TimeCountProjection projection) {
+        return new TimeCount(projection.getTimestamp(), projection.getCount());
+    }
 
     private LogEntryResponse toResponse(LogEntry logEntry) {
         return new LogEntryResponse(logEntry.getId(), logEntry.getTimestamp(), logEntry.getServiceName(),

@@ -33,6 +33,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "Malformed JSON request", request, Map.of());
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiErrorResponse> handleIllegalArgument(
+            IllegalArgumentException exception, HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, exception.getMessage(), request, Map.of());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleUnexpected(Exception exception, HttpServletRequest request) {
         LOGGER.error("Unexpected error while handling {}", request.getRequestURI(), exception);

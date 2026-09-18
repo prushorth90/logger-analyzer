@@ -1,37 +1,106 @@
-import { ArrowRight, ArrowUpRight, CircleCheck, CircleDashed, Clock3, Database, Globe, Info, Server, TriangleAlert } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { RefreshButton } from '../components/RefreshButton'
+import { useEffect, useState } from 'react'
+import { Activity, AlertCircle, Boxes, CircleCheck, CircleDashed, RefreshCw, TriangleAlert } from 'lucide-react'
+import { fetchLogOverview, type LogOverview, type NamedCount, type TimeCount } from '../api/overview'
 import { StatusBadge } from '../components/StatusBadge'
 import type { HealthState } from '../hooks/useHealth'
 
+const PERIODS = [
+  { label: '1 hour', hours: 1 },
+  { label: '6 hours', hours: 6 },
+  { label: '24 hours', hours: 24 },
+  { label: '7 days', hours: 168 },
+]
+
+const numberFormat = new Intl.NumberFormat()
+
+function TimelineChart({ points }: { points: TimeCount[] }) {
+  if (points.length === 0) return <div className="chart-empty">No logs in this period</div>
+  const width = 640
+  const height = 190
+  const max = Math.max(...points.map(point => point.count), 1)
+  const coordinates = points.map((point, index) => ({
+    ...point,
+    x: points.length === 1 ? width / 2 : index * width / (points.length - 1),
+    y: height - (point.count / max) * (height - 24) - 12,
+  }))
+  const line = coordinates.map(point => `${point.x},${point.y}`).join(' ')
+  return (
+    <div className="timeline-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Log volume over time">
+        <line x1="0" y1={height - 12} x2={width} y2={height - 12} className="chart-axis" />
+        <polyline points={line} className="chart-line" />
+        {coordinates.map(point => <circle key={point.timestamp} cx={point.x} cy={point.y} r="4"><title>{`${new Date(point.timestamp).toLocaleString()}: ${point.count} logs`}</title></circle>)}
+      </svg>
+      <div className="chart-range"><span>{new Date(points[0].timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' })}</span><span>{new Date(points.at(-1)!.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' })}</span></div>
+    </div>
+  )
+}
+
+function ErrorBars({ items }: { items: NamedCount[] }) {
+  if (items.length === 0) return <div className="chart-empty">No errors in this period</div>
+  const max = Math.max(...items.map(item => item.count), 1)
+  return <div className="error-bars">{items.map(item => <div className="error-bar" key={item.name}><div><span>{item.name}</span><strong>{numberFormat.format(item.count)}</strong></div><div className="bar-track"><span style={{ width: `${item.count / max * 100}%` }} /></div></div>)}</div>
+}
+
 export function OverviewPage({ health }: { health: HealthState }) {
-  const { latest, loading, checks, autoRefresh, setAutoRefresh, refresh } = health
+  const { latest, refresh: refreshHealth } = health
+  const [periodHours, setPeriodHours] = useState(24)
+  const [overview, setOverview] = useState<LogOverview | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [requestVersion, setRequestVersion] = useState(0)
   const state = !latest ? 'pending' : latest.data?.status === 'UP' ? 'up' : 'down'
-  const backendState = !latest ? 'pending' : latest.data ? 'up' : 'down'
-  const databaseState = !latest || !latest.data ? 'pending' : latest.data.database === 'UP' ? 'up' : 'down'
   const BannerIcon = state === 'up' ? CircleCheck : state === 'down' ? TriangleAlert : CircleDashed
 
+  useEffect(() => {
+    const controller = new AbortController()
+    const end = new Date()
+    const start = new Date(end.getTime() - periodHours * 60 * 60 * 1000)
+    fetchLogOverview(start.toISOString(), end.toISOString(), controller.signal)
+      .then(setOverview)
+      .catch((requestError: unknown) => {
+        if (requestError instanceof Error && requestError.name !== 'AbortError') setError(requestError.message)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [periodHours, requestVersion])
+
+  const changePeriod = (hours: number) => {
+    setLoading(true)
+    setError(null)
+    setPeriodHours(hours)
+  }
+
+  const refresh = () => {
+    setLoading(true)
+    setError(null)
+    refreshHealth()
+    setRequestVersion(version => version + 1)
+  }
+
   return (
-    <div className="page-content">
-      <div className="page-heading"><div><div className="eyebrow">SYSTEM / OVERVIEW</div><h1>System overview</h1><p>Your local stack, at a glance.</p></div><RefreshButton loading={loading} onRefresh={refresh} /></div>
+    <div className="page-content dashboard-page">
+      <div className="page-heading"><div><div className="eyebrow">LOGS / OVERVIEW</div><h1>Operational overview</h1><p>Volume, severity, and service health at a glance.</p></div><div className="dashboard-actions"><label><span>Time period</span><select aria-label="Time period" value={periodHours} onChange={event => changePeriod(Number(event.target.value))}>{PERIODS.map(period => <option key={period.hours} value={period.hours}>{period.label}</option>)}</select></label><button className="button" onClick={refresh} disabled={loading}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh</button></div></div>
       <section className={`health-banner ${state}`} role="status" aria-live="polite">
-        <BannerIcon size={29} />
-        <div><h2>{state === 'up' ? 'All systems operational' : state === 'pending' ? 'Connecting to your stack' : latest?.data ? 'Database connection unavailable' : 'Backend disconnected'}</h2><p>{state === 'up' ? 'Backend connected. PostgreSQL is responding.' : state === 'pending' ? 'Waiting for the first health response.' : latest?.error ?? 'The backend is reachable, but PostgreSQL is not responding.'}</p></div>
+        <BannerIcon size={22} />
+        <div><h2>{state === 'up' ? 'Ingestion stack operational' : state === 'pending' ? 'Checking ingestion stack' : latest?.data ? 'PostgreSQL unavailable' : 'Backend disconnected'}</h2><p>{state === 'up' ? `Spring Boot and PostgreSQL healthy · ${latest?.duration} ms` : state === 'pending' ? 'Waiting for the health endpoint.' : latest?.error ?? 'The backend is reachable, but PostgreSQL is not responding.'}</p></div>
         <StatusBadge state={state}>{state === 'up' ? 'Healthy' : state === 'pending' ? 'Checking' : 'Attention needed'}</StatusBadge>
       </section>
-      <div className="service-grid">
-        <article className="service-card"><div className="service-card-top"><span className="service-icon"><Globe size={19} /></span><StatusBadge state="up">Running</StatusBadge></div><h3>Frontend</h3><p>React + TypeScript</p><div className="service-card-bottom"><code>Browser client</code><span>Vite</span></div></article>
-        <article className="service-card"><div className="service-card-top"><span className="service-icon backend"><Server size={19} /></span><StatusBadge state={backendState}>{backendState === 'up' ? 'Connected' : backendState === 'pending' ? 'Checking' : 'Disconnected'}</StatusBadge></div><h3>Backend</h3><p>Spring Boot + Java 21</p><div className="service-card-bottom"><code>/api/health</code><span>{latest?.data ? `${latest.duration} ms` : 'HTTP API'}</span></div></article>
-        <article className="service-card"><div className="service-card-top"><span className="service-icon database"><Database size={19} /></span><StatusBadge state={databaseState}>{databaseState === 'up' ? 'Connected' : databaseState === 'down' ? 'Unavailable' : 'Unknown'}</StatusBadge></div><h3>Database</h3><p>PostgreSQL 17</p><div className="service-card-bottom"><code>Primary database</code><span>Persistent</span></div></article>
-      </div>
-      <section className="section"><div className="section-heading"><div><h2>Connection path</h2><p>One request. Three connected services.</p></div><Link className="subtle-link" to="/api-details">Inspect API<ArrowUpRight size={13} /></Link></div>
-        <div className="connection-flow"><div className="flow-node"><Globe size={24} /><div><strong>React frontend</strong><span>Same-origin proxy</span></div></div><div className="flow-line">HTTP / JSON<div /></div><div className="flow-node"><Server size={24} /><div><strong>Spring Boot</strong><span>/api/health</span></div></div><div className="flow-line">JDBC / SQL<div /></div><div className="flow-node"><Database size={24} /><div><strong>PostgreSQL</strong><span>SELECT 1</span></div></div></div>
-      </section>
-      <section className="section"><div className="section-heading"><div><h2>Recent health checks</h2><p>Live responses from your backend.</p></div><div className="check-controls"><label><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />Auto-refresh</label><span>{autoRefresh ? 'Every 30 seconds' : 'Paused'}</span></div></div>
-        <div className="table-scroll"><table><thead><tr><th>TIME</th><th>REQUEST</th><th>STATUS</th><th>RESPONSE TIME</th></tr></thead><tbody>{checks.length === 0 ? <tr><td colSpan={4} className="empty-row">Waiting for health checks...</td></tr> : checks.map((check, index) => <tr key={`${check.checkedAt.getTime()}-${index}`}><td>{check.checkedAt.toLocaleTimeString([], { hour12: false })}</td><td><span className="http-method">GET</span><span className="request-path">/api/health</span></td><td><StatusBadge state={check.data?.status === 'UP' ? 'up' : 'down'}>{check.data?.status === 'UP' ? '200 OK' : check.statusCode ? `${check.statusCode}${check.statusCode === 503 ? ' Unavailable' : ' Invalid response'}` : 'Unreachable'}</StatusBadge></td><td>{check.duration} ms</td></tr>)}</tbody></table></div>
-        <p className="table-note"><Info size={11} />Last {checks.length} of up to 8 checks in this session.</p>
-      </section>
-      <div className="section-heading section"><span className="subtle-link"><Clock3 size={12} />{latest ? `Last checked at ${latest.checkedAt.toLocaleTimeString()}` : 'No completed checks'}</span><Link to="/api-details" className="subtle-link">Response details<ArrowRight size={12} /></Link></div>
+      {error && !overview ? <section className="analytics-error"><AlertCircle size={20} /><div><strong>Overview unavailable</strong><p>{error}. Check that the backend is running, then refresh.</p></div></section> : <>
+        <div className={`metric-grid ${loading ? 'loading' : ''}`} aria-busy={loading}>
+          <article className="metric-card"><span className="metric-icon total"><Activity size={18} /></span><div><span>Total logs</span><strong>{numberFormat.format(overview?.totalLogs ?? 0)}</strong></div></article>
+          <article className="metric-card"><span className="metric-icon errors"><AlertCircle size={18} /></span><div><span>Errors</span><strong>{numberFormat.format(overview?.errorCount ?? 0)}</strong></div></article>
+          <article className="metric-card"><span className="metric-icon warnings"><TriangleAlert size={18} /></span><div><span>Warnings</span><strong>{numberFormat.format(overview?.warningCount ?? 0)}</strong></div></article>
+          <article className="metric-card"><span className="metric-icon services"><Boxes size={18} /></span><div><span>Active services</span><strong>{numberFormat.format(overview?.activeServices ?? 0)}</strong></div></article>
+        </div>
+        <div className="chart-grid">
+          <section className="chart-panel"><div className="chart-heading"><div><h2>Log volume</h2><p>Hourly events across the selected period</p></div><span>{numberFormat.format(overview?.totalLogs ?? 0)} events</span></div><TimelineChart points={overview?.logsOverTime ?? []} /><div className="severity-key">{overview?.logsBySeverity.map(item => <span key={item.name}><i className={`severity-dot ${item.name.toLowerCase()}`} />{item.name} <strong>{numberFormat.format(item.count)}</strong></span>)}</div></section>
+          <section className="chart-panel"><div className="chart-heading"><div><h2>Errors by service</h2><p>Services contributing error events</p></div><span>{overview?.errorsByService.length ?? 0} affected</span></div><ErrorBars items={overview?.errorsByService ?? []} /></section>
+        </div>
+        <section className="service-volume"><div className="chart-heading"><div><h2>Service volume</h2><p>All events grouped by source service</p></div></div><div className="service-volume-list">{overview?.logsByService.length ? overview.logsByService.map(item => <div key={item.name}><span>{item.name}</span><strong>{numberFormat.format(item.count)}</strong></div>) : <p className="chart-empty">No active services in this period</p>}</div></section>
+      </>}
     </div>
   )
 }

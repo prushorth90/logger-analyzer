@@ -84,7 +84,7 @@ backend/
 docker-compose.yml
 ```
 
-The `LogEntry` entity and repository persist logs submitted through `POST /api/logs`. Search and analysis features are not implemented. Flyway owns schema changes; Hibernate validates the schema at startup.
+The `LogEntry` entity and repository persist logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Flyway owns schema changes; Hibernate validates the schema at startup.
 
 ## Ingest Logs
 
@@ -115,6 +115,16 @@ curl --fail-with-body -X POST http://localhost:8080/api/logs \
 ```
 
 Invalid JSON or validation failures return HTTP 400 with field details where available. Unexpected failures return HTTP 500 with a generic message; server details remain in backend logs.
+
+## Operational Overview
+
+`GET /api/logs/overview` requires `startTimestamp` and `endTimestamp` ISO-8601 query parameters. The period is half-open: the start is included and the end is excluded. PostgreSQL returns total logs, ERROR and WARN counts, active services, logs grouped by service and severity, hourly log volume, and errors grouped by service using bounded `GROUP BY` queries.
+
+```sh
+curl --fail-with-body 'http://localhost:8080/api/logs/overview?startTimestamp=2026-09-16T12%3A00%3A00Z&endTimestamp=2026-09-17T12%3A00%3A00Z'
+```
+
+The Overview route provides 1-hour, 6-hour, 24-hour, and 7-day periods with summary cards, an hourly volume chart, and errors by service. PostgreSQL remains the only source for these aggregates; no cache is involved.
 
 ## Health Contract
 

@@ -15,7 +15,7 @@ function Workspace() {
         <p className="nav-heading">WORKSPACE</p>
         <nav aria-label="Main navigation">
           <NavLink to="/" end><ScrollText size={17} />Logs</NavLink>
-          <NavLink to="/system"><LayoutDashboard size={17} />System</NavLink>
+          <NavLink to="/system"><LayoutDashboard size={17} />Overview</NavLink>
           <NavLink to="/api-details"><Braces size={17} />Health API</NavLink>
         </nav>
         <div className="sidebar-bottom">

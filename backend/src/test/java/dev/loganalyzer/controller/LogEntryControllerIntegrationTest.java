@@ -115,6 +115,43 @@ class LogEntryControllerIntegrationTest {
     }
 
             @Test
+            void aggregatesOverviewWithinSelectedTimePeriod() throws Exception {
+            repository.saveAll(List.of(
+                log("2026-09-17T09:59:59Z", "outside-api", "production", Severity.ERROR, "Before", null),
+                log("2026-09-17T10:00:00Z", "billing-api", "production", Severity.ERROR, "Failed", null),
+                log("2026-09-17T10:30:00Z", "billing-api", "production", Severity.WARN, "Slow", null),
+                log("2026-09-17T11:15:00Z", "orders-api", "production", Severity.ERROR, "Failed", null),
+                log("2026-09-17T11:45:00Z", "orders-api", "production", Severity.INFO, "Accepted", null),
+                log("2026-09-17T12:00:00Z", "outside-api", "production", Severity.ERROR, "After", null)));
+
+            mockMvc.perform(get("/api/logs/overview")
+                    .param("startTimestamp", "2026-09-17T10:00:00Z")
+                    .param("endTimestamp", "2026-09-17T12:00:00Z"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalLogs").value(4))
+                .andExpect(jsonPath("$.errorCount").value(2))
+                .andExpect(jsonPath("$.warningCount").value(1))
+                .andExpect(jsonPath("$.activeServices").value(2))
+                .andExpect(jsonPath("$.logsByService[0].name").value("billing-api"))
+                .andExpect(jsonPath("$.logsByService[0].count").value(2))
+                .andExpect(jsonPath("$.logsBySeverity.length()").value(3))
+                .andExpect(jsonPath("$.logsOverTime[0].timestamp").value("2026-09-17T10:00:00Z"))
+                .andExpect(jsonPath("$.logsOverTime[0].count").value(2))
+                .andExpect(jsonPath("$.logsOverTime[1].timestamp").value("2026-09-17T11:00:00Z"))
+                .andExpect(jsonPath("$.errorsByService[0].name").value("billing-api"))
+                .andExpect(jsonPath("$.errorsByService[0].count").value(1));
+            }
+
+    @Test
+    void rejectsInvalidOverviewTimePeriod() throws Exception {
+        mockMvc.perform(get("/api/logs/overview")
+                        .param("startTimestamp", "2026-09-17T12:00:00Z")
+                        .param("endTimestamp", "2026-09-17T12:00:00Z"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("startTimestamp must be before endTimestamp"));
+    }
+
+            @Test
             void filtersLogsByCombinedCriteria() throws Exception {
             repository.saveAll(List.of(
                 log("2026-09-17T12:00:00Z", "billing-api", "production", Severity.ERROR,
