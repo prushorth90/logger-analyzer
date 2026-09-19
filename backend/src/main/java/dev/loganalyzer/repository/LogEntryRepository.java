@@ -5,13 +5,34 @@ import java.util.List;
 import java.util.UUID;
 
 import dev.loganalyzer.entity.LogEntry;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface LogEntryRepository extends JpaRepository<LogEntry, UUID>, JpaSpecificationExecutor<LogEntry> {
-	boolean existsByIngestionEventId(UUID ingestionEventId);
+	@Modifying
+	@Query(value = """
+		INSERT INTO log_entries (
+			id, ingestion_event_id, timestamp, service_name, environment, severity, message, trace_id, host, metadata
+		) VALUES (
+			:id, :ingestionEventId, :timestamp, :serviceName, :environment, :severity,
+			:message, :traceId, :host, CAST(:metadata AS jsonb)
+		)
+		ON CONFLICT (ingestion_event_id) WHERE ingestion_event_id IS NOT NULL DO NOTHING
+		""", nativeQuery = true)
+	int insertIfAbsent(
+			@Param("id") UUID id,
+			@Param("ingestionEventId") UUID ingestionEventId,
+			@Param("timestamp") Instant timestamp,
+			@Param("serviceName") String serviceName,
+			@Param("environment") String environment,
+			@Param("severity") String severity,
+			@Param("message") String message,
+			@Param("traceId") String traceId,
+			@Param("host") String host,
+			@Param("metadata") String metadata);
 
     @Query(value = """
 	    SELECT COUNT(*) AS totalLogs,

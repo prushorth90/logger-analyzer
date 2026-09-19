@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.loganalyzer.dto.LogEntryResponse;
 import dev.loganalyzer.dto.LogOverviewResponse;
 import dev.loganalyzer.dto.LogOverviewResponse.NamedCount;
@@ -17,6 +19,8 @@ import dev.loganalyzer.repository.LogEntrySpecifications;
 import dev.loganalyzer.repository.LogOverviewSummary;
 import dev.loganalyzer.repository.NamedCountProjection;
 import dev.loganalyzer.repository.TimeCountProjection;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -26,19 +30,36 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class LogEntryService {
     private final LogEntryRepository logEntryRepository;
+    private final ObjectMapper objectMapper;
+    private final Counter duplicateEvents;
 
-    public LogEntryService(LogEntryRepository logEntryRepository) {
+    public LogEntryService(LogEntryRepository logEntryRepository, ObjectMapper objectMapper, MeterRegistry meterRegistry) {
         this.logEntryRepository = logEntryRepository;
+        this.objectMapper = objectMapper;
+        this.duplicateEvents = Counter.builder("log.ingestion.duplicates")
+                .description("Kafka log events ignored because their event ID was already persisted")
+                .register(meterRegistry);
     }
 
     @Transactional
     public void persist(LogRawEventV1 event) {
-        if (logEntryRepository.existsByIngestionEventId(event.eventId())) {
-            return;
+        int inserted = logEntryRepository.insertIfAbsent(
+                UUID.randomUUID(), event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
+                event.severity().name(), event.message(), event.traceId(), event.host(), serializeMetadata(event));
+        if (inserted == 0) {
+            duplicateEvents.increment();
         }
-        LogEntry logEntry = new LogEntry(event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
-                event.severity(), event.message(), event.traceId(), event.host(), event.metadata());
-        logEntryRepository.save(logEntry);
+    }
+
+    private String serializeMetadata(LogRawEventV1 event) {
+        if (event.metadata() == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(event.metadata());
+        } catch (JsonProcessingException exception) {
+            throw new IllegalArgumentException("Log event metadata is not valid JSON", exception);
+        }
     }
 
     @Transactional(readOnly = true)

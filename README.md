@@ -142,7 +142,15 @@ HTTP POST -> validation -> logs.raw publish -> HTTP 202
                     Spring Kafka consumer -> PostgreSQL insert
 ```
 
-Kafka decouples request latency from database writes and buffers accepted traffic while the consumer catches up. This introduces eventual consistency: a successful POST may not appear in `GET /api/logs` immediately. Kafka delivery is at least once, so `LogRawEventV1.eventId` is stored in the unique `ingestion_event_id` column and duplicate deliveries are ignored. The event name and `schemaVersion` are explicitly versioned; incompatible future schemas should use a new event model and consumer path rather than silently changing V1.
+Kafka decouples request latency from database writes and buffers accepted traffic while the consumer catches up. This introduces eventual consistency: a successful POST may not appear in `GET /api/logs` immediately. The event name and `schemaVersion` are explicitly versioned; incompatible future schemas should use a new event model and consumer path rather than silently changing V1.
+
+### At-least-once delivery and idempotency
+
+Every accepted request receives a UUID `LogRawEventV1.eventId` before it is published. Kafka provides at-least-once delivery, so the same event may reach the consumer more than once after retries, rebalances, or acknowledgment failures. PostgreSQL stores the event ID in `log_entries.ingestion_event_id`, protected by the unique `uq_log_entries_ingestion_event_id` index.
+
+The consumer does not use a check-then-insert sequence because two consumers could both observe that a row is absent and then race to insert it. Instead, persistence uses one atomic PostgreSQL `INSERT ... ON CONFLICT DO NOTHING` statement. The first delivery creates the row; concurrent or later deliveries with the same event ID affect zero rows and are treated as successful duplicates. This keeps duplicate handling inside the same database operation, avoids transaction rollback from a unique-constraint exception, and allows Kafka to acknowledge the duplicate safely.
+
+Each ignored duplicate increments the Micrometer counter `log.ingestion.duplicates`. It is available through `GET /actuator/metrics/log.ingestion.duplicates` and appears as `log_ingestion_duplicates_total` in the Prometheus endpoint.
 
 ### Retries and dead-letter handling
 

@@ -3,17 +3,22 @@ package dev.loganalyzer.controller;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
+import dev.loganalyzer.messaging.LogIngestionPublisher;
+import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -55,6 +60,12 @@ class LogEntryControllerIntegrationTest {
     @Autowired
     private LogEntryRepository repository;
 
+    @Autowired
+    private KafkaTemplate<String, LogRawEventV1> kafkaTemplate;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
+
     @BeforeEach
     void clearLogs() {
         repository.deleteAll();
@@ -89,6 +100,27 @@ class LogEntryControllerIntegrationTest {
                     assertThat(logEntry.getSeverity()).isEqualTo(Severity.ERROR);
                     assertThat(logEntry.getMessage()).isEqualTo("Payment failed");
                 }));
+    }
+
+    @Test
+    void persistsRepeatedKafkaDeliveryOnlyOnceAndCountsDuplicates() {
+        UUID eventId = UUID.randomUUID();
+        LogRawEventV1 event = new LogRawEventV1(LogRawEventV1.SCHEMA_VERSION, eventId, "duplicate-test",
+                Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "test", Severity.ERROR,
+                "Repeated delivery", null, "billing-01", Map.of("source", "integration-test"));
+        double duplicateCountBefore = meterRegistry.counter("log.ingestion.duplicates").count();
+
+        for (int delivery = 0; delivery < 5; delivery++) {
+            kafkaTemplate.send(LogIngestionPublisher.TOPIC, "delivery-" + delivery, event).join();
+        }
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(repository.findAll())
+                    .filteredOn(logEntry -> eventId.equals(logEntry.getIngestionEventId()))
+                    .hasSize(1);
+            assertThat(meterRegistry.counter("log.ingestion.duplicates").count())
+                    .isEqualTo(duplicateCountBefore + 4);
+        });
     }
 
     @Test

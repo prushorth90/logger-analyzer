@@ -20,6 +20,9 @@ public class LogRawEventConsumer {
     @KafkaListener(topics = LogIngestionPublisher.TOPIC)
     public void consume(LogRawEventV1 event) {
         try (MDC.MDCCloseable ignored = MDC.putCloseable("correlationId", event.correlationId())) {
+            if (event.eventId() == null) {
+                throw new IllegalArgumentException("logs.raw eventId is required");
+            }
             if (event.schemaVersion() != LogRawEventV1.SCHEMA_VERSION) {
                 throw new IllegalArgumentException("Unsupported logs.raw schema version: " + event.schemaVersion());
             }

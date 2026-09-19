@@ -4,60 +4,69 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
-import dev.loganalyzer.entity.LogEntry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LogEntryServiceTest {
     @Test
-    void persistsConsumedLogEvent() {
+    void persistsConsumedLogEvent() throws Exception {
         LogEntryRepository repository = mock(LogEntryRepository.class);
-        LogEntryService service = new LogEntryService(repository);
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        LogEntryService service = new LogEntryService(repository, new ObjectMapper(), meterRegistry);
         Instant timestamp = Instant.parse("2026-09-17T12:00:00Z");
         Map<String, Object> metadata = Map.of("requestMethod", "POST", "durationMs", 42);
         UUID eventId = UUID.randomUUID();
         LogRawEventV1 event = new LogRawEventV1(LogRawEventV1.SCHEMA_VERSION, eventId, "correlation-123",
                 timestamp, "billing-api", "production", Severity.ERROR, "Payment failed", "trace-123",
                 "billing-01", metadata);
+            when(repository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
 
         service.persist(event);
 
-        ArgumentCaptor<LogEntry> captor = ArgumentCaptor.forClass(LogEntry.class);
-        verify(repository).save(captor.capture());
-        assertThat(captor.getValue().getIngestionEventId()).isEqualTo(eventId);
-        assertThat(captor.getValue().getServiceName()).isEqualTo("billing-api");
-        assertThat(captor.getValue().getTimestamp()).isEqualTo(timestamp);
-        assertThat(captor.getValue().getMetadata()).isEqualTo(metadata);
+        ArgumentCaptor<String> metadataCaptor = ArgumentCaptor.forClass(String.class);
+        verify(repository).insertIfAbsent(any(), org.mockito.ArgumentMatchers.eq(eventId),
+                org.mockito.ArgumentMatchers.eq(timestamp), org.mockito.ArgumentMatchers.eq("billing-api"),
+                org.mockito.ArgumentMatchers.eq("production"), org.mockito.ArgumentMatchers.eq("ERROR"),
+                org.mockito.ArgumentMatchers.eq("Payment failed"), org.mockito.ArgumentMatchers.eq("trace-123"),
+                org.mockito.ArgumentMatchers.eq("billing-01"),
+                metadataCaptor.capture());
+        assertThat(metadataCaptor.getValue()).isEqualTo(new ObjectMapper().writeValueAsString(metadata));
+        assertThat(meterRegistry.counter("log.ingestion.duplicates").count()).isZero();
     }
 
     @Test
     void ignoresAlreadyPersistedEvent() {
         LogEntryRepository repository = mock(LogEntryRepository.class);
-        LogEntryService service = new LogEntryService(repository);
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        LogEntryService service = new LogEntryService(repository, new ObjectMapper(), meterRegistry);
         UUID eventId = UUID.randomUUID();
-        when(repository.existsByIngestionEventId(eventId)).thenReturn(true);
+        when(repository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(0);
         LogRawEventV1 event = new LogRawEventV1(LogRawEventV1.SCHEMA_VERSION, eventId, "correlation-123",
                 Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "production", Severity.ERROR,
                 "Payment failed", null, "billing-01", Map.of());
 
         service.persist(event);
 
-        verify(repository, never()).save(org.mockito.ArgumentMatchers.any());
+        assertThat(meterRegistry.counter("log.ingestion.duplicates").count()).isEqualTo(1);
     }
 
     @Test
     void returnsEmptyWhenLogEntryDoesNotExist() {
         LogEntryRepository repository = mock(LogEntryRepository.class);
-        LogEntryService service = new LogEntryService(repository);
+        LogEntryService service = new LogEntryService(repository, new ObjectMapper(), new SimpleMeterRegistry());
         UUID id = UUID.randomUUID();
         when(repository.findById(id)).thenReturn(java.util.Optional.empty());
 

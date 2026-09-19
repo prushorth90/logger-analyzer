@@ -1,5 +1,6 @@
 package dev.loganalyzer.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
@@ -66,7 +68,7 @@ class LogOverviewCacheTest {
 
         @Bean
         LogEntryService logEntryService(LogEntryRepository repository) {
-            return new LogEntryService(repository);
+            return new LogEntryService(repository, new ObjectMapper(), new SimpleMeterRegistry());
         }
 
         @Bean
