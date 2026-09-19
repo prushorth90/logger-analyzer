@@ -25,6 +25,14 @@ public class KafkaTopicConfiguration {
                 .build();
     }
 
+    @Bean
+    NewTopic logsPersistedTopic() {
+        return TopicBuilder.name(LogPersistedEventPublisher.TOPIC)
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
             @Bean
             NewTopic logsRawDeadLetterTopic() {
             return TopicBuilder.name(LogIngestionPublisher.DEAD_LETTER_TOPIC)
@@ -57,6 +65,21 @@ public class KafkaTopicConfiguration {
             configurer.configure(factory, consumerFactory);
             factory.setCommonErrorHandler(new DefaultErrorHandler(
                     new FixedBackOff(retryProperties.interval().toMillis(), retryProperties.maxAttempts() - 1L)));
+            return factory;
+        }
+
+        @Bean
+        ConcurrentKafkaListenerContainerFactory<Object, Object> indexingKafkaListenerContainerFactory(
+                ConcurrentKafkaListenerContainerFactoryConfigurer configurer,
+                ConsumerFactory<Object, Object> consumerFactory,
+                LogIngestionRetryProperties retryProperties) {
+            ConcurrentKafkaListenerContainerFactory<Object, Object> factory =
+                    new ConcurrentKafkaListenerContainerFactory<>();
+            configurer.configure(factory, consumerFactory);
+            DefaultErrorHandler errorHandler = new DefaultErrorHandler(
+                    new FixedBackOff(retryProperties.interval().toMillis(), retryProperties.maxAttempts() - 1L));
+            errorHandler.addNotRetryableExceptions(IllegalArgumentException.class);
+            factory.setCommonErrorHandler(errorHandler);
             return factory;
         }
 }

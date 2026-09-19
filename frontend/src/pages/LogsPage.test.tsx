@@ -29,7 +29,7 @@ it('filters, paginates, and opens complete log details', async () => {
   render(<LogsPage />)
 
   expect(await screen.findByText('Payment provider timed out')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Message search'), { target: { value: 'timed out' } })
+  fireEvent.change(screen.getByLabelText('Full-text search'), { target: { value: 'timed out' } })
   fireEvent.change(screen.getByLabelText('Severity'), { target: { value: 'ERROR' } })
   fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'payments' } })
   fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'production' } })

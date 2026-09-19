@@ -2,6 +2,7 @@ package dev.loganalyzer.repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Collection;
 import java.util.UUID;
 
 import dev.loganalyzer.entity.LogEntry;
@@ -12,6 +13,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface LogEntryRepository extends JpaRepository<LogEntry, UUID>, JpaSpecificationExecutor<LogEntry> {
+	List<LogEntry> findByIngestionEventIdIn(Collection<UUID> ingestionEventIds);
+
 	@Modifying
 	@Query(value = """
 		INSERT INTO log_entries (

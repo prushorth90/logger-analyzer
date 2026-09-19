@@ -101,7 +101,7 @@ export function LogsPage() {
       </div>
 
       <form className="log-filters" onSubmit={applyFilters}>
-        <label className="search-filter"><span>Message search</span><div><Search size={15} /><input value={form.search} onChange={event => updateFilter('search', event.target.value)} placeholder="Search log messages" /></div></label>
+        <label className="search-filter"><span>Full-text search</span><div><Search size={15} /><input value={form.search} onChange={event => updateFilter('search', event.target.value)} placeholder="Message, service, trace ID…" /></div></label>
         <label><span>Severity</span><select value={form.severity} onChange={event => updateFilter('severity', event.target.value)}><option value="">All levels</option><option>DEBUG</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></label>
         <label><span>Service</span><input value={form.serviceName} onChange={event => updateFilter('serviceName', event.target.value)} placeholder="Any service" /></label>
         <label><span>Environment</span><input value={form.environment} onChange={event => updateFilter('environment', event.target.value)} placeholder="Any environment" /></label>

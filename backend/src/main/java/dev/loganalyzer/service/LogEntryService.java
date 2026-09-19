@@ -2,6 +2,7 @@ package dev.loganalyzer.service;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -14,17 +15,23 @@ import dev.loganalyzer.dto.PagedLogEntryResponse;
 import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogRawEventV1;
+import dev.loganalyzer.messaging.LogPersistedEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.repository.LogEntrySpecifications;
 import dev.loganalyzer.repository.LogOverviewSummary;
 import dev.loganalyzer.repository.NamedCountProjection;
 import dev.loganalyzer.repository.TimeCountProjection;
+import dev.loganalyzer.search.LogSearchCriteria;
+import dev.loganalyzer.search.LogSearchResult;
+import dev.loganalyzer.search.OpenSearchLogIndex;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -32,10 +39,15 @@ public class LogEntryService {
     private final LogEntryRepository logEntryRepository;
     private final ObjectMapper objectMapper;
     private final Counter duplicateEvents;
+    private final ApplicationEventPublisher applicationEventPublisher;
+    private final OpenSearchLogIndex logIndex;
 
-    public LogEntryService(LogEntryRepository logEntryRepository, ObjectMapper objectMapper, MeterRegistry meterRegistry) {
+    public LogEntryService(LogEntryRepository logEntryRepository, ObjectMapper objectMapper, MeterRegistry meterRegistry,
+            ApplicationEventPublisher applicationEventPublisher, OpenSearchLogIndex logIndex) {
         this.logEntryRepository = logEntryRepository;
         this.objectMapper = objectMapper;
+        this.applicationEventPublisher = applicationEventPublisher;
+        this.logIndex = logIndex;
         this.duplicateEvents = Counter.builder("log.ingestion.duplicates")
                 .description("Kafka log events ignored because their event ID was already persisted")
                 .register(meterRegistry);
@@ -48,6 +60,8 @@ public class LogEntryService {
                 event.severity().name(), event.message(), event.traceId(), event.host(), serializeMetadata(event));
         if (inserted == 0) {
             duplicateEvents.increment();
+        } else {
+            applicationEventPublisher.publishEvent(LogPersistedEventV1.from(event));
         }
     }
 
@@ -77,6 +91,20 @@ public class LogEntryService {
             Instant endTimestamp,
             String search,
             Pageable pageable) {
+            if (StringUtils.hasText(search)) {
+                LogSearchResult result = logIndex.search(new LogSearchCriteria(search, serviceName, environment, severity,
+                    traceId, startTimestamp, endTimestamp), pageable);
+                Map<UUID, LogEntry> entriesByEventId = logEntryRepository.findByIngestionEventIdIn(result.eventIds())
+                    .stream().collect(java.util.stream.Collectors.toMap(LogEntry::getIngestionEventId, entry -> entry));
+                java.util.List<LogEntryResponse> content = result.eventIds().stream()
+                    .map(entriesByEventId::get)
+                    .filter(java.util.Objects::nonNull)
+                    .map(this::toResponse)
+                    .toList();
+                int totalPages = (int) Math.ceil((double) result.totalHits() / pageable.getPageSize());
+                return new PagedLogEntryResponse(content, pageable.getPageNumber(), pageable.getPageSize(), totalPages,
+                    result.totalHits());
+            }
         Page<LogEntryResponse> page = logEntryRepository.findAll(
                 LogEntrySpecifications.withFilters(serviceName, environment, severity, traceId,
                     startTimestamp, endTimestamp, search),

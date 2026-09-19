@@ -34,8 +34,7 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: dev.loganalyzer.messaging
-        spring.json.value.default.type: dev.loganalyzer.messaging.LogRawEventV1
-        spring.json.use.type.headers: false
+        spring.json.use.type.headers: true
     listener:
       ack-mode: record
   data:
@@ -67,6 +66,9 @@ logging:
   pattern:
     level: "%5p [correlationId=%X{correlationId:-}]"
 log-analyzer:
+  opensearch:
+    url: ${OPENSEARCH_URL:http://localhost:9200}
+    index-name: ${OPENSEARCH_INDEX_NAME:logs-v1}
   ingestion:
     retry:
       max-attempts: ${LOG_INGESTION_MAX_ATTEMPTS:3}

@@ -1,10 +1,10 @@
 # Log Analyzer
 
-A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, Kafka, and Redis. It provides an end-to-end health check and asynchronous REST log ingestion through Kafka into PostgreSQL.
+A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, Kafka, Redis, and OpenSearch. It provides asynchronous REST log ingestion, durable PostgreSQL storage, and full-text log search.
 
 ## Start with Docker Compose
 
-Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 5432, 6379, 8080, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
+Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 5432, 6379, 8080, 9200, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
 
 From the repository root:
 
@@ -12,7 +12,7 @@ From the repository root:
 docker compose up --build -d --wait --wait-timeout 180
 ```
 
-The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, and Kafka must become healthy, and the Kafka ingestion topics must be available, before the backend starts. The backend must become healthy before the frontend starts.
+The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, Kafka, and OpenSearch must become healthy, and the Kafka ingestion topics must be available, before the backend starts. The backend must become healthy before the frontend starts.
 
 | Service | Address |
 | --- | --- |
@@ -22,6 +22,7 @@ The first build may take several minutes. Both application image builds run thei
 | PostgreSQL | localhost:5432 |
 | Redis | localhost:6379 |
 | Kafka | localhost:29092 |
+| OpenSearch | http://localhost:9200 |
 
 Open the frontend to see the backend connection status, database availability, request duration, and recent health checks. The Health API route shows the actual JSON response. Checks refresh every 30 seconds and can also be triggered manually or paused. The latest eight checks are kept only in browser memory. Frontend status means the page has loaded; it is not an independent server probe.
 
@@ -53,6 +54,7 @@ Defaults work without an environment file. To override them, create a root `.env
 | `POSTGRES_PASSWORD` | `local_dev_password` |
 | `REDIS_PORT` | `6379` |
 | `KAFKA_PORT` | `29092` |
+| `OPENSEARCH_PORT` | `9200` |
 | `LOG_INGESTION_MAX_ATTEMPTS` | `3` |
 | `LOG_INGESTION_RETRY_INTERVAL` | `2s` |
 
@@ -83,7 +85,8 @@ backend/
     repository/   JDBC health probe and JPA repository
     entity/       Initial LogEntry persistence model
     dto/          Public health response contract
-    messaging/    Versioned Kafka event, producer, consumer, and topic configuration
+    messaging/    Versioned Kafka events, producers, consumers, and topic configuration
+    search/       OpenSearch mapping, indexing, and query adapter
   src/main/resources/db/migration/
                   Versioned PostgreSQL schema (Flyway)
   src/test/       Health endpoint tests
@@ -91,7 +94,7 @@ backend/
 docker-compose.yml
 ```
 
-The Kafka consumer persists logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Flyway owns schema changes; Hibernate validates the schema at startup.
+The Kafka consumer persists logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Text searches use OpenSearch to identify matching event IDs and then hydrate the response from PostgreSQL. Flyway owns schema changes; Hibernate validates the schema at startup.
 
 ## Ingest Logs
 
@@ -140,6 +143,12 @@ HTTP POST -> validation -> logs.raw publish -> HTTP 202
                                 |
                                 v
                     Spring Kafka consumer -> PostgreSQL insert
+                                                    |
+                                                    v after commit
+                                           logs.persisted publish
+                                                    |
+                                                    v
+                                      OpenSearch indexing consumer
 ```
 
 Kafka decouples request latency from database writes and buffers accepted traffic while the consumer catches up. This introduces eventual consistency: a successful POST may not appear in `GET /api/logs` immediately. The event name and `schemaVersion` are explicitly versioned; incompatible future schemas should use a new event model and consumer path rather than silently changing V1.
@@ -151,6 +160,22 @@ Every accepted request receives a UUID `LogRawEventV1.eventId` before it is publ
 The consumer does not use a check-then-insert sequence because two consumers could both observe that a row is absent and then race to insert it. Instead, persistence uses one atomic PostgreSQL `INSERT ... ON CONFLICT DO NOTHING` statement. The first delivery creates the row; concurrent or later deliveries with the same event ID affect zero rows and are treated as successful duplicates. This keeps duplicate handling inside the same database operation, avoids transaction rollback from a unique-constraint exception, and allows Kafka to acknowledge the duplicate safely.
 
 Each ignored duplicate increments the Micrometer counter `log.ingestion.duplicates`. It is available through `GET /actuator/metrics/log.ingestion.duplicates` and appears as `log_ingestion_duplicates_total` in the Prometheus endpoint.
+
+### PostgreSQL and OpenSearch responsibilities
+
+PostgreSQL remains the durable source of truth. It owns complete log records, ingestion idempotency, transactional writes, filtered listing without text search, overview aggregation, and API response data. OpenSearch is an eventually consistent search projection; it is not used to authorize writes or replace PostgreSQL records.
+
+After a new log transaction commits, the backend publishes `LogPersistedEventV1` to `logs.persisted`. Duplicate `logs.raw` deliveries do not publish additional persisted events. A separate consumer indexes the event into the `logs-v1` OpenSearch index using `eventId` as the document ID, making repeated indexing idempotent.
+
+The index mapping uses:
+
+- `message` as analyzed `text`.
+- `serviceName`, `severity`, `traceId`, and `environment` as exact `keyword` fields with analyzed `.search` subfields.
+- `timestamp` as `date` and `eventId` as `keyword`.
+
+When `GET /api/logs` includes the `search` parameter, OpenSearch performs multi-field text matching across message, service name, severity, trace ID, and environment. Any structured service, severity, trace ID, environment, and timestamp parameters are applied as OpenSearch filters in the same query. OpenSearch returns ordered event IDs; the backend loads those records from PostgreSQL before returning them. Without `search`, filtering and pagination remain PostgreSQL queries.
+
+Indexing is asynchronous, so a newly persisted log can briefly appear in PostgreSQL-backed listings before it appears in text search. If OpenSearch is unavailable, PostgreSQL data remains intact, but text search and new projection updates are unavailable until OpenSearch recovers.
 
 ### Retries and dead-letter handling
 
@@ -230,7 +255,7 @@ In Docker, Nginx forwards `/api/*` to `backend:8080` using Docker DNS. In local 
 Use Node.js 22.12+ (or a compatible newer LTS), Java 21, and Maven 3.9+. Start the data services:
 
 ```sh
-docker compose up -d --wait postgres redis kafka kafka-init
+docker compose up -d --wait postgres redis kafka kafka-init opensearch
 ```
 
 In one terminal:
@@ -248,7 +273,7 @@ npm ci
 npm run dev
 ```
 
-Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, and `KAFKA_BOOTSTRAP_SERVERS` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
+Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `KAFKA_BOOTSTRAP_SERVERS`, and `OPENSEARCH_URL` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
 
 ## Checks
 
@@ -271,12 +296,12 @@ To check outage handling on this disposable development stack, stop PostgreSQL w
 
 ## Scope
 
-Frontend, backend, PostgreSQL, Kafka, and Redis are configured. Kafka handles asynchronous log ingestion through `logs.raw`, Redis is limited to short-lived dashboard aggregation caching, and PostgreSQL remains durable storage. OpenSearch and Grafana are not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included. The root Compose file and its default network can be extended in later increments; there are no placeholder containers.
+Frontend, backend, PostgreSQL, Kafka, Redis, and OpenSearch are configured. Kafka handles asynchronous persistence through `logs.raw` and search projection through `logs.persisted`. Redis is limited to short-lived dashboard aggregation caching, PostgreSQL remains durable storage, and OpenSearch serves full-text queries. Grafana is not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included.
 
 ## Troubleshooting
 
 - If Docker cannot connect, start Docker Desktop and retry.
-- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init` and `docker compose ps`.
+- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init opensearch` and `docker compose ps`.
 - For a disconnected UI, check both the direct and proxied health URLs above. A 502 indicates the proxy cannot reach the backend; a JSON 503 indicates a database problem.
 - To apply source changes to Docker images, rerun `docker compose up --build -d --wait`.
 - UI fonts are loaded from Google Fonts, with local sans-serif/monospace fallbacks when offline. Application behavior does not depend on that font request.

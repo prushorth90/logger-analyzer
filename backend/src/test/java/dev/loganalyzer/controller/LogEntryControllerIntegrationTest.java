@@ -11,6 +11,8 @@ import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogIngestionPublisher;
 import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
+import dev.loganalyzer.search.LogSearchResult;
+import dev.loganalyzer.search.OpenSearchLogIndex;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
@@ -29,6 +32,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -52,6 +57,7 @@ class LogEntryControllerIntegrationTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.cache.type", () -> "none");
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        registry.add("log-analyzer.opensearch.indexing-enabled", () -> "false");
     }
 
     @Autowired
@@ -65,6 +71,9 @@ class LogEntryControllerIntegrationTest {
 
     @Autowired
     private MeterRegistry meterRegistry;
+
+    @MockitoBean
+    private OpenSearchLogIndex logIndex;
 
     @BeforeEach
     void clearLogs() {
@@ -195,13 +204,15 @@ class LogEntryControllerIntegrationTest {
 
             @Test
             void filtersLogsByCombinedCriteria() throws Exception {
-            repository.saveAll(List.of(
+            List<LogEntry> savedLogs = repository.saveAll(List.of(
                 log("2026-09-17T12:00:00Z", "billing-api", "production", Severity.ERROR,
                     "Payment FAILED for order 42", "trace-123"),
                 log("2026-09-17T12:05:00Z", "billing-api", "production", Severity.INFO,
                     "Payment accepted", "trace-123"),
                 log("2026-09-17T12:10:00Z", "orders-api", "staging", Severity.ERROR,
                     "Payment failed", "trace-999")));
+            when(logIndex.search(any(), any())).thenReturn(new LogSearchResult(
+                    List.of(savedLogs.getFirst().getIngestionEventId()), 1));
 
             mockMvc.perform(get("/api/logs")
                     .param("serviceName", "billing-api")
@@ -252,7 +263,7 @@ class LogEntryControllerIntegrationTest {
 
             private LogEntry log(String timestamp, String serviceName, String environment, Severity severity,
                 String message, String traceId) {
-            return new LogEntry(Instant.parse(timestamp), serviceName, environment, severity, message, traceId,
-                serviceName + "-01", Map.of());
+            return new LogEntry(UUID.randomUUID(), Instant.parse(timestamp), serviceName, environment, severity,
+                message, traceId, serviceName + "-01", Map.of());
             }
 }
