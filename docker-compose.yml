@@ -39,10 +39,14 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-log_analyzer}
       DB_USERNAME: ${POSTGRES_USER:-log_analyzer}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--max-time", "6", "http://localhost:8080/api/health"]
@@ -50,6 +54,18 @@ services:
       timeout: 7s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
 
   postgres:

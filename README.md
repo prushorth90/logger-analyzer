@@ -1,10 +1,10 @@
 # Log Analyzer
 
-A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, and PostgreSQL. It provides an end-to-end health check and synchronous REST log ingestion backed by PostgreSQL.
+A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, and Redis. It provides an end-to-end health check and synchronous REST log ingestion backed by PostgreSQL.
 
 ## Start with Docker Compose
 
-Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 8080, and 5432, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
+Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 6379, 8080, and 5432, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
 
 From the repository root:
 
@@ -12,7 +12,7 @@ From the repository root:
 docker compose up --build -d --wait --wait-timeout 180
 ```
 
-The first build may take several minutes. Both application image builds run their tests. PostgreSQL must become healthy before the backend starts, and the backend must become healthy before the frontend starts.
+The first build may take several minutes. Both application image builds run their tests. PostgreSQL and Redis must become healthy before the backend starts, and the backend must become healthy before the frontend starts.
 
 | Service | Address |
 | --- | --- |
@@ -20,6 +20,7 @@ The first build may take several minutes. Both application image builds run thei
 | Backend health | http://localhost:8080/api/health |
 | Health through the frontend proxy | http://localhost:3000/api/health |
 | PostgreSQL | localhost:5432 |
+| Redis | localhost:6379 |
 
 Open the frontend to see the backend connection status, database availability, request duration, and recent health checks. The Health API route shows the actual JSON response. Checks refresh every 30 seconds and can also be triggered manually or paused. The latest eight checks are kept only in browser memory. Frontend status means the page has loaded; it is not an independent server probe.
 
@@ -49,6 +50,7 @@ Defaults work without an environment file. To override them, create a root `.env
 | `POSTGRES_DB` | `log_analyzer` |
 | `POSTGRES_USER` | `log_analyzer` |
 | `POSTGRES_PASSWORD` | `local_dev_password` |
+| `REDIS_PORT` | `6379` |
 
 For a port conflict, choose a free host port, for example:
 
@@ -147,7 +149,11 @@ Open the dashboard while traffic is running and use **Refresh** on the Overview 
 curl --fail-with-body 'http://localhost:8080/api/logs/overview?startTimestamp=2026-09-16T12%3A00%3A00Z&endTimestamp=2026-09-17T12%3A00%3A00Z'
 ```
 
-The Overview route provides 1-hour, 6-hour, 24-hour, and 7-day periods with summary cards, an hourly volume chart, and errors by service. PostgreSQL remains the only source for these aggregates; no cache is involved.
+The Overview route provides 1-hour, 6-hour, 24-hour, and 7-day periods with summary cards, an hourly volume chart, and errors by service. PostgreSQL remains the durable source of truth. Redis caches the complete overview response for 45 seconds because these repeated aggregation queries are comparatively expensive. Cache keys include the exact start and end timestamps, so different dashboard periods cannot collide. The short TTL bounds staleness for rapidly changing logs; writes do not invalidate or populate the cache.
+
+Individual log writes, single-log reads, and filtered or paginated log searches are intentionally not cached. Those paths either change durable state or need current row-level data, so caching would add invalidation complexity without the same aggregation benefit.
+
+Spring Boot Actuator publishes cache hit and miss counters at `GET /actuator/metrics/cache.gets`; Prometheus-format metrics are available at `GET /actuator/prometheus`. Look for `cache_gets_total` with `cache="log-overview"` and `result="hit"` or `result="miss"` after requesting an overview more than once.
 
 ## Health Contract
 
@@ -168,10 +174,10 @@ In Docker, Nginx forwards `/api/*` to `backend:8080` using Docker DNS. In local 
 
 ## Develop Without Application Containers
 
-Use Node.js 22.12+ (or a compatible newer LTS), Java 21, and Maven 3.9+. Start only the database:
+Use Node.js 22.12+ (or a compatible newer LTS), Java 21, and Maven 3.9+. Start the data services:
 
 ```sh
-docker compose up -d --wait postgres
+docker compose up -d --wait postgres redis
 ```
 
 In one terminal:
@@ -189,7 +195,7 @@ npm ci
 npm run dev
 ```
 
-Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose database. With custom database settings, explicitly export `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
+Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, and `REDIS_PORT` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
 
 ## Checks
 
@@ -212,12 +218,12 @@ To check outage handling on this disposable development stack, stop PostgreSQL w
 
 ## Scope
 
-Only frontend, backend, and PostgreSQL are configured. Redis, Kafka, OpenSearch, Prometheus, and Grafana are intentionally not installed or configured. The root Compose file and its default network can be extended in later increments; there are no placeholder containers or observability dependencies.
+Frontend, backend, PostgreSQL, and Redis are configured. Redis is limited to short-lived dashboard aggregation caching; PostgreSQL remains durable storage. Kafka, OpenSearch, and Grafana are not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included. The root Compose file and its default network can be extended in later increments; there are no placeholder containers.
 
 ## Troubleshooting
 
 - If Docker cannot connect, start Docker Desktop and retry.
-- For startup failures, inspect `docker compose logs backend postgres` and `docker compose ps`.
+- For startup failures, inspect `docker compose logs backend postgres redis` and `docker compose ps`.
 - For a disconnected UI, check both the direct and proxied health URLs above. A 502 indicates the proxy cannot reach the backend; a JSON 503 indicates a database problem.
 - To apply source changes to Docker images, rerun `docker compose up --build -d --wait`.
 - UI fonts are loaded from Google Fonts, with local sans-serif/monospace fallbacks when offline. Application behavior does not depend on that font request.

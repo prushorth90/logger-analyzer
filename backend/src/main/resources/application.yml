@@ -20,8 +20,28 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: 2s
+      timeout: 2s
+      repositories:
+        enabled: false
+  cache:
+    type: redis
+    cache-names: log-overview
+    redis:
+      time-to-live: 45s
+      enable-statistics: true
+      key-prefix: "log-analyzer:"
 server:
   port: 8080
   error:
     include-message: never
     include-stacktrace: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus

@@ -39,6 +39,7 @@ class LogEntryControllerIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.cache.type", () -> "none");
     }
 
     @Autowired

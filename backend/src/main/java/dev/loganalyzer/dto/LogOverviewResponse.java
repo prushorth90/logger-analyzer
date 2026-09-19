@@ -1,5 +1,6 @@
 package dev.loganalyzer.dto;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.List;
 
@@ -13,11 +14,11 @@ public record LogOverviewResponse(
         List<NamedCount> logsByService,
         List<NamedCount> logsBySeverity,
         List<TimeCount> logsOverTime,
-        List<NamedCount> errorsByService) {
+        List<NamedCount> errorsByService) implements Serializable {
 
-    public record NamedCount(String name, long count) {
+    public record NamedCount(String name, long count) implements Serializable {
     }
 
-    public record TimeCount(Instant timestamp, long count) {
+    public record TimeCount(Instant timestamp, long count) implements Serializable {
     }
 }

@@ -17,6 +17,7 @@ import dev.loganalyzer.repository.LogEntrySpecifications;
 import dev.loganalyzer.repository.LogOverviewSummary;
 import dev.loganalyzer.repository.NamedCountProjection;
 import dev.loganalyzer.repository.TimeCountProjection;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -61,6 +62,9 @@ public class LogEntryService {
             page.getTotalPages(), page.getTotalElements());
     }
 
+        @Cacheable(cacheNames = "log-overview",
+            key = "#startTimestamp.toEpochMilli() + ':' + #endTimestamp.toEpochMilli()",
+            sync = true)
     @Transactional(readOnly = true)
     public LogOverviewResponse getOverview(Instant startTimestamp, Instant endTimestamp) {
         if (!startTimestamp.isBefore(endTimestamp)) {
