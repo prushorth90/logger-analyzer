@@ -22,6 +22,9 @@ public class LogEntry {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Column(name = "ingestion_event_id", unique = true)
+    private UUID ingestionEventId;
+
     @Column(nullable = false)
     private Instant timestamp;
 
@@ -53,6 +56,12 @@ public class LogEntry {
 
     public LogEntry(Instant timestamp, String serviceName, String environment, Severity severity,
             String message, String traceId, String host, Map<String, Object> metadata) {
+        this(null, timestamp, serviceName, environment, severity, message, traceId, host, metadata);
+    }
+
+    public LogEntry(UUID ingestionEventId, Instant timestamp, String serviceName, String environment, Severity severity,
+            String message, String traceId, String host, Map<String, Object> metadata) {
+        this.ingestionEventId = ingestionEventId;
         this.timestamp = timestamp;
         this.serviceName = serviceName;
         this.environment = environment;
@@ -64,6 +73,7 @@ public class LogEntry {
     }
 
     public UUID getId() { return id; }
+    public UUID getIngestionEventId() { return ingestionEventId; }
     public Instant getTimestamp() { return timestamp; }
     public String getServiceName() { return serviceName; }
     public String getEnvironment() { return environment; }

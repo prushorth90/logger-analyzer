@@ -11,6 +11,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface LogEntryRepository extends JpaRepository<LogEntry, UUID>, JpaSpecificationExecutor<LogEntry> {
+	boolean existsByIngestionEventId(UUID ingestionEventId);
+
     @Query(value = """
 	    SELECT COUNT(*) AS totalLogs,
 		   COUNT(*) FILTER (WHERE severity = 'ERROR') AS errorCount,

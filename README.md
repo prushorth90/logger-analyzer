@@ -1,10 +1,10 @@
 # Log Analyzer
 
-A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, and Redis. It provides an end-to-end health check and synchronous REST log ingestion backed by PostgreSQL.
+A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, Kafka, and Redis. It provides an end-to-end health check and asynchronous REST log ingestion through Kafka into PostgreSQL.
 
 ## Start with Docker Compose
 
-Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 6379, 8080, and 5432, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
+Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 5432, 6379, 8080, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
 
 From the repository root:
 
@@ -12,7 +12,7 @@ From the repository root:
 docker compose up --build -d --wait --wait-timeout 180
 ```
 
-The first build may take several minutes. Both application image builds run their tests. PostgreSQL and Redis must become healthy before the backend starts, and the backend must become healthy before the frontend starts.
+The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, and Kafka must become healthy, and the `logs.raw` topic must be created, before the backend starts. The backend must become healthy before the frontend starts.
 
 | Service | Address |
 | --- | --- |
@@ -21,6 +21,7 @@ The first build may take several minutes. Both application image builds run thei
 | Health through the frontend proxy | http://localhost:3000/api/health |
 | PostgreSQL | localhost:5432 |
 | Redis | localhost:6379 |
+| Kafka | localhost:29092 |
 
 Open the frontend to see the backend connection status, database availability, request duration, and recent health checks. The Health API route shows the actual JSON response. Checks refresh every 30 seconds and can also be triggered manually or paused. The latest eight checks are kept only in browser memory. Frontend status means the page has loaded; it is not an independent server probe.
 
@@ -51,6 +52,7 @@ Defaults work without an environment file. To override them, create a root `.env
 | `POSTGRES_USER` | `log_analyzer` |
 | `POSTGRES_PASSWORD` | `local_dev_password` |
 | `REDIS_PORT` | `6379` |
+| `KAFKA_PORT` | `29092` |
 
 For a port conflict, choose a free host port, for example:
 
@@ -79,6 +81,7 @@ backend/
     repository/   JDBC health probe and JPA repository
     entity/       Initial LogEntry persistence model
     dto/          Public health response contract
+    messaging/    Versioned Kafka event, producer, consumer, and topic configuration
   src/main/resources/db/migration/
                   Versioned PostgreSQL schema (Flyway)
   src/test/       Health endpoint tests
@@ -86,11 +89,13 @@ backend/
 docker-compose.yml
 ```
 
-The `LogEntry` entity and repository persist logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Flyway owns schema changes; Hibernate validates the schema at startup.
+The Kafka consumer persists logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Flyway owns schema changes; Hibernate validates the schema at startup.
 
 ## Ingest Logs
 
-`POST /api/logs` accepts JSON and returns HTTP 201 with the saved log and a `Location` header. Required fields are `timestamp`, `serviceName`, `environment`, `severity`, `message`, and `host`. `severity` must be `DEBUG`, `INFO`, `WARN`, or `ERROR`; `traceId` and `metadata` are optional.
+`POST /api/logs` validates the JSON, publishes a `LogRawEventV1` event to the `logs.raw` Kafka topic, and returns HTTP 202 without waiting for PostgreSQL. Required fields are `timestamp`, `serviceName`, `environment`, `severity`, `message`, and `host`. `severity` must be `DEBUG`, `INFO`, `WARN`, or `ERROR`; `traceId` and `metadata` are optional.
+
+The response contains `eventId`, `correlationId`, and `status: "accepted"`. Clients may supply `X-Correlation-ID`; otherwise the backend generates one and returns it in both the response header and body. Publishing and consumption logs include that correlation ID. HTTP 202 means the event was accepted for asynchronous publishing, not that it is already queryable from PostgreSQL.
 
 Send an INFO log:
 
@@ -117,6 +122,25 @@ curl --fail-with-body -X POST http://localhost:8080/api/logs \
 ```
 
 Invalid JSON or validation failures return HTTP 400 with field details where available. Unexpected failures return HTTP 500 with a generic message; server details remain in backend logs.
+
+### Asynchronous ingestion architecture
+
+The original synchronous path kept the HTTP request open while JPA inserted the row:
+
+```text
+HTTP POST -> validation -> PostgreSQL insert -> HTTP 201
+```
+
+The asynchronous path removes PostgreSQL from the request lifecycle:
+
+```text
+HTTP POST -> validation -> logs.raw publish -> HTTP 202
+                                |
+                                v
+                    Spring Kafka consumer -> PostgreSQL insert
+```
+
+Kafka decouples request latency from database writes and buffers accepted traffic while the consumer catches up. This introduces eventual consistency: a successful POST may not appear in `GET /api/logs` immediately. Kafka delivery is at least once, so `LogRawEventV1.eventId` is stored in the unique `ingestion_event_id` column and duplicate deliveries are ignored. The event name and `schemaVersion` are explicitly versioned; incompatible future schemas should use a new event model and consumer path rather than silently changing V1.
 
 ### Generate development traffic
 
@@ -177,7 +201,7 @@ In Docker, Nginx forwards `/api/*` to `backend:8080` using Docker DNS. In local 
 Use Node.js 22.12+ (or a compatible newer LTS), Java 21, and Maven 3.9+. Start the data services:
 
 ```sh
-docker compose up -d --wait postgres redis
+docker compose up -d --wait postgres redis kafka kafka-init
 ```
 
 In one terminal:
@@ -195,7 +219,7 @@ npm ci
 npm run dev
 ```
 
-Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, and `REDIS_PORT` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
+Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, and `KAFKA_BOOTSTRAP_SERVERS` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
 
 ## Checks
 
@@ -212,18 +236,18 @@ cd backend
 mvn test
 ```
 
-Backend unit tests do not require a database. Controller integration tests use Testcontainers and require a running Docker daemon. `docker compose build` executes both projects' tests in their specified build environments. The live Compose health check validates real PostgreSQL connectivity and migration startup.
+Backend unit tests do not require external services. Controller integration tests use Testcontainers PostgreSQL and Kafka and require a running Docker daemon. `docker compose build` executes both projects' tests in their specified build environments. The live Compose health check validates real PostgreSQL connectivity and migration startup.
 
 To check outage handling on this disposable development stack, stop PostgreSQL with `docker compose stop postgres`, refresh the UI, and expect HTTP 503 with database status `DOWN`. Restore it with `docker compose up -d --wait postgres backend frontend`. The backend reconnects without a rebuild.
 
 ## Scope
 
-Frontend, backend, PostgreSQL, and Redis are configured. Redis is limited to short-lived dashboard aggregation caching; PostgreSQL remains durable storage. Kafka, OpenSearch, and Grafana are not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included. The root Compose file and its default network can be extended in later increments; there are no placeholder containers.
+Frontend, backend, PostgreSQL, Kafka, and Redis are configured. Kafka handles asynchronous log ingestion through `logs.raw`, Redis is limited to short-lived dashboard aggregation caching, and PostgreSQL remains durable storage. OpenSearch and Grafana are not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included. The root Compose file and its default network can be extended in later increments; there are no placeholder containers.
 
 ## Troubleshooting
 
 - If Docker cannot connect, start Docker Desktop and retry.
-- For startup failures, inspect `docker compose logs backend postgres redis` and `docker compose ps`.
+- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init` and `docker compose ps`.
 - For a disconnected UI, check both the direct and proxied health URLs above. A 502 indicates the proxy cannot reach the backend; a JSON 503 indicates a database problem.
 - To apply source changes to Docker images, rerun `docker compose up --build -d --wait`.
 - UI fonts are loaded from Google Fonts, with local sans-serif/monospace fallbacks when offline. Application behavior does not depend on that font request.

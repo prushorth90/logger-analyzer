@@ -4,7 +4,6 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
-import dev.loganalyzer.dto.CreateLogEntryRequest;
 import dev.loganalyzer.dto.LogEntryResponse;
 import dev.loganalyzer.dto.LogOverviewResponse;
 import dev.loganalyzer.dto.LogOverviewResponse.NamedCount;
@@ -12,6 +11,7 @@ import dev.loganalyzer.dto.LogOverviewResponse.TimeCount;
 import dev.loganalyzer.dto.PagedLogEntryResponse;
 import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
+import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.repository.LogEntrySpecifications;
 import dev.loganalyzer.repository.LogOverviewSummary;
@@ -32,10 +32,13 @@ public class LogEntryService {
     }
 
     @Transactional
-    public LogEntryResponse create(CreateLogEntryRequest request) {
-        LogEntry logEntry = new LogEntry(request.timestamp(), request.serviceName(), request.environment(),
-                request.severity(), request.message(), request.traceId(), request.host(), request.metadata());
-        return toResponse(logEntryRepository.save(logEntry));
+    public void persist(LogRawEventV1 event) {
+        if (logEntryRepository.existsByIngestionEventId(event.eventId())) {
+            return;
+        }
+        LogEntry logEntry = new LogEntry(event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
+                event.severity(), event.message(), event.traceId(), event.host(), event.metadata());
+        logEntryRepository.save(logEntry);
     }
 
     @Transactional(readOnly = true)

@@ -1,5 +1,6 @@
 package dev.loganalyzer.controller;
 
+import dev.loganalyzer.messaging.LogIngestionPublisher;
 import dev.loganalyzer.service.LogEntryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,19 +17,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class LogEntryControllerTest {
     private LogEntryService service;
+    private LogIngestionPublisher publisher;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         service = mock(LogEntryService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new LogEntryController(service))
+        publisher = mock(LogIngestionPublisher.class);
+        mockMvc = MockMvcBuilders.standaloneSetup(new LogEntryController(service, publisher))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
 
     @Test
     void returnsGenericResponseForUnexpectedErrors() throws Exception {
-        when(service.create(any())).thenThrow(new IllegalStateException("private database details"));
+        when(publisher.publish(any(), any())).thenThrow(new IllegalStateException("private Kafka details"));
 
         mockMvc.perform(post("/api/logs")
                         .contentType(MediaType.APPLICATION_JSON)

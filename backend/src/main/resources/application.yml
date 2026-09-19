@@ -20,6 +20,24 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: log-analyzer-persistence-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: dev.loganalyzer.messaging
+        spring.json.value.default.type: dev.loganalyzer.messaging.LogRawEventV1
+        spring.json.use.type.headers: false
+    listener:
+      ack-mode: record
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -45,3 +63,6 @@ management:
     web:
       exposure:
         include: health,metrics,prometheus
+logging:
+  pattern:
+    level: "%5p [correlationId=%X{correlationId:-}]"

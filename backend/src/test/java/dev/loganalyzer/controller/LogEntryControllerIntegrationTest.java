@@ -3,6 +3,7 @@ package dev.loganalyzer.controller;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
@@ -17,10 +18,12 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -34,12 +37,16 @@ class LogEntryControllerIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Container
+    static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka-native:4.1.0");
+
     @DynamicPropertySource
     static void configureDatabase(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.cache.type", () -> "none");
+        registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
     }
 
     @Autowired
@@ -54,9 +61,10 @@ class LogEntryControllerIntegrationTest {
     }
 
     @Test
-    void createsAndPersistsLogEntry() throws Exception {
+    void acceptsAndEventuallyPersistsLogEntry() throws Exception {
         mockMvc.perform(post("/api/logs")
                         .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Correlation-ID", "correlation-123")
                         .content("""
                                 {
                                   "timestamp": "2026-09-17T12:00:00Z",
@@ -69,17 +77,18 @@ class LogEntryControllerIntegrationTest {
                                   "metadata": {"durationMs": 42}
                                 }
                                 """))
-                .andExpect(status().isCreated())
-                .andExpect(header().string("Location", org.hamcrest.Matchers.matchesPattern("/api/logs/[0-9a-f-]+")))
-                .andExpect(jsonPath("$.id").isNotEmpty())
-                .andExpect(jsonPath("$.severity").value("ERROR"))
-                .andExpect(jsonPath("$.metadata.durationMs").value(42));
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("X-Correlation-ID", "correlation-123"))
+                .andExpect(jsonPath("$.eventId").isNotEmpty())
+                .andExpect(jsonPath("$.correlationId").value("correlation-123"))
+                .andExpect(jsonPath("$.status").value("accepted"));
 
-        assertThat(repository.findAll()).singleElement().satisfies(logEntry -> {
-            assertThat(logEntry.getServiceName()).isEqualTo("billing-api");
-            assertThat(logEntry.getSeverity()).isEqualTo(Severity.ERROR);
-            assertThat(logEntry.getMessage()).isEqualTo("Payment failed");
-        });
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() ->
+                assertThat(repository.findAll()).singleElement().satisfies(logEntry -> {
+                    assertThat(logEntry.getServiceName()).isEqualTo("billing-api");
+                    assertThat(logEntry.getSeverity()).isEqualTo(Severity.ERROR);
+                    assertThat(logEntry.getMessage()).isEqualTo("Payment failed");
+                }));
     }
 
     @Test
