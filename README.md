@@ -12,7 +12,7 @@ From the repository root:
 docker compose up --build -d --wait --wait-timeout 180
 ```
 
-The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, and Kafka must become healthy, and the `logs.raw` topic must be created, before the backend starts. The backend must become healthy before the frontend starts.
+The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, and Kafka must become healthy, and the Kafka ingestion topics must be available, before the backend starts. The backend must become healthy before the frontend starts.
 
 | Service | Address |
 | --- | --- |
@@ -53,6 +53,8 @@ Defaults work without an environment file. To override them, create a root `.env
 | `POSTGRES_PASSWORD` | `local_dev_password` |
 | `REDIS_PORT` | `6379` |
 | `KAFKA_PORT` | `29092` |
+| `LOG_INGESTION_MAX_ATTEMPTS` | `3` |
+| `LOG_INGESTION_RETRY_INTERVAL` | `2s` |
 
 For a port conflict, choose a free host port, for example:
 
@@ -141,6 +143,25 @@ HTTP POST -> validation -> logs.raw publish -> HTTP 202
 ```
 
 Kafka decouples request latency from database writes and buffers accepted traffic while the consumer catches up. This introduces eventual consistency: a successful POST may not appear in `GET /api/logs` immediately. Kafka delivery is at least once, so `LogRawEventV1.eventId` is stored in the unique `ingestion_event_id` column and duplicate deliveries are ignored. The event name and `schemaVersion` are explicitly versioned; incompatible future schemas should use a new event model and consumer path rather than silently changing V1.
+
+### Retries and dead-letter handling
+
+A **transient error** is expected to recover without changing the event, such as a temporary PostgreSQL connection failure. The consumer retries these failures twice after the initial attempt by default, waiting two seconds between attempts. Configure the total attempt count with `LOG_INGESTION_MAX_ATTEMPTS` and the delay with `LOG_INGESTION_RETRY_INTERVAL`.
+
+A **permanent error** means retrying the same event cannot make it valid, such as an unsupported `LogRawEventV1.schemaVersion`. Permanent validation failures skip automatic retries. When processing is exhausted, Kafka stores the original event on `logs.raw.dlq` with exception headers. A separate consumer projects the original event, failure reason, automatic retry count, and failure timestamp into PostgreSQL's `dead_letter_events` table for inspection. Its finite error policy never republishes onto `logs.raw.dlq`, preventing a dead-letter loop.
+
+View failures in the **Failed ingestion** frontend route or request them directly:
+
+```sh
+curl --fail-with-body 'http://localhost:8080/api/dead-letter-events?page=0&size=20'
+```
+
+Manual retry is an explicit operator action. It republishes the stored original event once to `logs.raw`, where the normal bounded retry policy applies. Each dead-letter event permits at most three manual retries and remains in the audit table, so repeated failures cannot create an automatic replay loop:
+
+```sh
+curl --fail-with-body -X POST \
+  http://localhost:8080/api/dead-letter-events/INGESTION_EVENT_ID/retry
+```
 
 ### Generate development traffic
 

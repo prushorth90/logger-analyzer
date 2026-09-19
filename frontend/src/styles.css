@@ -143,6 +143,16 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 22px
 .logs-table td:last-child, .logs-table th:last-child { text-align: left; }
 .message-cell, .service-cell { overflow: hidden; text-overflow: ellipsis; }
 .logs-table code { color: #68747e; font-size: 9px; }
+.failed-table { table-layout: fixed; min-width: 920px; }
+.failed-table th:nth-child(1) { width: 170px; }
+.failed-table th:nth-child(2) { width: 130px; }
+.failed-table th:nth-child(3) { width: 185px; }
+.failed-table th:nth-child(5) { width: 140px; }
+.failed-table th:nth-child(6) { width: 100px; }
+.failed-table td:last-child, .failed-table th:last-child { text-align: right; }
+.failed-table code { display: block; overflow: hidden; color: #68747e; font-size: 9px; text-overflow: ellipsis; }
+.failure-reason { overflow: hidden; text-overflow: ellipsis; }
+.failed-table .button { padding: 7px 10px; }
 .severity { display: inline-flex; align-items: center; justify-content: center; min-width: 51px; border: 1px solid; border-radius: 4px; padding: 3px 6px; font-family: var(--mono); font-size: 9px; font-weight: 500; }
 .severity-debug { color: #687682; background: #f2f4f6; border-color: #dfe3e7; }
 .severity-info { color: #2e6f8e; background: #edf6fa; border-color: #d3e8f1; }

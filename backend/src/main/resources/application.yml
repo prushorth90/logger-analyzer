@@ -66,3 +66,8 @@ management:
 logging:
   pattern:
     level: "%5p [correlationId=%X{correlationId:-}]"
+log-analyzer:
+  ingestion:
+    retry:
+      max-attempts: ${LOG_INGESTION_MAX_ATTEMPTS:3}
+      interval: ${LOG_INGESTION_RETRY_INTERVAL:2s}

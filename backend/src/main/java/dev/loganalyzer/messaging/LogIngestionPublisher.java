@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 @Service
 public class LogIngestionPublisher {
     public static final String TOPIC = "logs.raw";
+    public static final String DEAD_LETTER_TOPIC = "logs.raw.dlq";
     public static final String CORRELATION_ID_HEADER = "X-Correlation-ID";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LogIngestionPublisher.class);
@@ -57,5 +58,9 @@ public class LogIngestionPublisher {
         }
 
         return new LogIngestionAcceptedResponse(eventId, correlationId, "accepted");
+    }
+
+    public void republish(LogRawEventV1 event) {
+        kafkaTemplate.send(TOPIC, event.eventId().toString(), event).join();
     }
 }
