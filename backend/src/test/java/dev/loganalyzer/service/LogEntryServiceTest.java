@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.messaging.LogPersistedEventV1;
+import dev.loganalyzer.dto.LiveLogEvent;
 import dev.loganalyzer.observability.ApplicationMetrics;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.search.LogSearchResult;
@@ -49,7 +50,8 @@ class LogEntryServiceTest {
         assertThat(service.persist(event)).isTrue();
 
         ArgumentCaptor<String> metadataCaptor = ArgumentCaptor.forClass(String.class);
-        verify(repository).insertIfAbsent(any(), org.mockito.ArgumentMatchers.eq(eventId),
+        ArgumentCaptor<UUID> logIdCaptor = ArgumentCaptor.forClass(UUID.class);
+        verify(repository).insertIfAbsent(logIdCaptor.capture(), org.mockito.ArgumentMatchers.eq(eventId),
                 org.mockito.ArgumentMatchers.eq(timestamp), org.mockito.ArgumentMatchers.eq("billing-api"),
                 org.mockito.ArgumentMatchers.eq("production"), org.mockito.ArgumentMatchers.eq("ERROR"),
                 org.mockito.ArgumentMatchers.eq("Payment failed"), org.mockito.ArgumentMatchers.eq("trace-123"),
@@ -59,6 +61,10 @@ class LogEntryServiceTest {
         assertThat(meterRegistry.counter("log_analyzer.ingestion.duplicates").count()).isZero();
         assertThat(meterRegistry.timer("log_analyzer.postgresql.persistence").count()).isEqualTo(1);
         verify(eventPublisher).publishEvent(org.mockito.ArgumentMatchers.isA(LogPersistedEventV1.class));
+        verify(eventPublisher).publishEvent(org.mockito.ArgumentMatchers.<Object>argThat(value ->
+            value instanceof LiveLogEvent liveEvent
+                && liveEvent.id().equals(logIdCaptor.getValue())
+                && liveEvent.message().equals("Payment failed")));
     }
 
     @Test

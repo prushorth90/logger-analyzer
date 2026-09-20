@@ -115,6 +115,14 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 22px
 .not-found a { display: inline-block; margin-top: 20px; color: var(--green); }
 .logs-page { min-width: 0; }
 .logs-heading { margin-bottom: 22px; }
+.live-controls { display: flex; align-items: center; gap: 9px; }
+.live-status { min-width: 92px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; border: 1px solid #dfe4e7; border-radius: 4px; background: #fff; color: #7c858e; font-size: 10px; text-transform: capitalize; }
+.live-status svg { color: currentColor; }
+.live-status-connected { color: #247552; border-color: #cce3d5; background: #eef7f1; }
+.live-status-reconnecting { color: #9a6819; border-color: #eadbbd; background: #fff9ec; }
+.live-status-disconnected { color: #a34735; border-color: #edd5cf; background: #fff4f1; }
+.live-update-banner { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; padding: 9px 12px; border: 1px solid #cce3d5; border-radius: 4px; background: #eef7f1; color: #2d694e; font-size: 11px; }
+.live-update-banner span { color: #477d64; font-weight: 600; }
 .search-workbench { background: #fff; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .search-command { display: grid; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); color: #606971; font-size: 11px; font-weight: 600; }
 .search-command > div { position: relative; display: flex; gap: 9px; }

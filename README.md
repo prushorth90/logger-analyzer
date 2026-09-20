@@ -111,6 +111,14 @@ docker-compose.yml
 
 The Kafka consumer persists logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Text searches use OpenSearch to identify matching event IDs and then hydrate the response from PostgreSQL. Flyway owns schema changes; Hibernate validates the schema at startup.
 
+### Live log updates
+
+`GET /api/logs/stream` is a Server-Sent Events endpoint that supplements the paginated `GET /api/logs` API. It does not replay history. After a new log transaction commits, the backend broadcasts one compact `log` event containing only the database row ID, timestamp, service name, environment, severity, message, and trace ID.
+
+The React log explorer keeps its normal REST query for initial loading, pagination, filtering, and authoritative refreshes. On unfiltered newest-first page 0, compact SSE events are deduplicated by row ID and prepended immediately. On filtered results, oldest-first sorting, or later pages, the UI shows a **new logs available** action instead of inserting an event that may not belong in the current result set.
+
+The page displays `Live`, `Connecting`, `Reconnecting`, or `Disconnected` status. The client reconnects with exponential backoff capped at 15 seconds. The server sends 15-second heartbeat comments, removes closed emitters, and tells clients to retry after two seconds. Nginx disables buffering only for the SSE route and keeps the standard timeout behavior for other REST calls.
+
 ## Distributed Tracing Architecture
 
 The backend container runs with the OpenTelemetry Java agent. It automatically instruments incoming Spring MVC requests, Kafka publishing and consumption, PostgreSQL JDBC calls, Lettuce Redis commands, and HTTP requests to OpenSearch. Application code remains independent of the OpenTelemetry SDK.

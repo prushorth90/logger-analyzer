@@ -10,6 +10,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.loganalyzer.dto.LogEntryResponse;
 import dev.loganalyzer.dto.LogOverviewResponse;
+import dev.loganalyzer.dto.LiveLogEvent;
 import dev.loganalyzer.dto.LogOverviewResponse.NamedCount;
 import dev.loganalyzer.dto.LogOverviewResponse.TimeCount;
 import dev.loganalyzer.dto.PagedLogEntryResponse;
@@ -65,12 +66,13 @@ public class LogEntryService {
 
     @Transactional
     public boolean persist(LogRawEventV1 event) {
+        UUID logEntryId = UUID.randomUUID();
         String metadata = serializeMetadata(event);
         Timer.Sample sample = Timer.start(meterRegistry);
         int inserted;
         try {
             inserted = logEntryRepository.insertIfAbsent(
-                    UUID.randomUUID(), event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
+                    logEntryId, event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
                     event.severity().name(), event.message(), event.traceId(), event.host(), metadata);
         } finally {
             sample.stop(metrics.postgresqlPersistenceTimer());
@@ -80,6 +82,7 @@ public class LogEntryService {
             return false;
         } else {
             applicationEventPublisher.publishEvent(LogPersistedEventV1.from(event));
+            applicationEventPublisher.publishEvent(LiveLogEvent.from(logEntryId, event));
             return true;
         }
     }

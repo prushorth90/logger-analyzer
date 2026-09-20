@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { AlertCircle, BookmarkPlus, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { AlertCircle, BookmarkPlus, ChevronLeft, ChevronRight, Radio, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { fetchLogs, type LogEntry, type LogFilters, type LogSeverity, type PagedLogResponse } from '../api/logs'
 import { createSavedSearch, deleteSavedSearch, fetchSavedSearches, type SavedSearch, type SavedSearchDefinition } from '../api/savedSearches'
 import { Link } from 'react-router-dom'
+import { useLogStream } from '../hooks/useLogStream'
 
 const PAGE_SIZE = 20
 const EMPTY_FILTERS = { severity: '', serviceName: '', environment: '', traceId: '', search: '', startDate: '', endDate: '', sortDirection: 'NEWEST' }
@@ -60,6 +61,32 @@ export function LogsPage() {
   const [saveName, setSaveName] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedSearchError, setSavedSearchError] = useState<string | null>(null)
+  const [pendingLiveLogs, setPendingLiveLogs] = useState(0)
+  const { status: streamStatus } = useLogStream(latestLog => {
+    const canPrepend = filters.page === 0
+      && filters.sortDirection !== 'OLDEST'
+      && !filters.severity
+      && !filters.serviceName
+      && !filters.environment
+      && !filters.traceId
+      && !filters.search
+      && !filters.startTimestamp
+      && !filters.endTimestamp
+    if (!canPrepend) {
+      setPendingLiveLogs(count => count + 1)
+      return
+    }
+    setResult(current => {
+      if (!current || current.content.some(log => log.id === latestLog.id)) return current
+      const log: LogEntry = { ...latestLog, host: null, metadata: {} }
+      return {
+        ...current,
+        content: [log, ...current.content].slice(0, current.pageSize),
+        totalRecords: current.totalRecords + 1,
+        totalPages: Math.ceil((current.totalRecords + 1) / current.pageSize),
+      }
+    })
+  })
 
   useEffect(() => {
     const controller = new AbortController()
@@ -119,6 +146,7 @@ export function LogsPage() {
     setLoading(true)
     setError(null)
     setRequestVersion(version => version + 1)
+    setPendingLiveLogs(0)
   }
 
   function applySavedSearch(savedSearch: SavedSearch) {
@@ -179,10 +207,10 @@ export function LogsPage() {
     <section className="page-content logs-page">
       <div className="page-heading logs-heading">
         <div><p className="eyebrow">OBSERVABILITY / LOGS</p><h1>Log explorer</h1><p>Search and inspect application events across your services.</p></div>
-        <button className="button" onClick={retry} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh
-        </button>
+        <div className="live-controls"><span className={`live-status live-status-${streamStatus}`}><Radio size={13} />{streamStatus === 'connected' ? 'Live' : streamStatus}</span><button className="button" onClick={retry} disabled={loading}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh</button></div>
       </div>
+
+      {pendingLiveLogs > 0 && <button className="live-update-banner" onClick={retry}><Radio size={14} />{pendingLiveLogs} new {pendingLiveLogs === 1 ? 'log' : 'logs'} available<span>Refresh results</span></button>}
 
       <form className="search-workbench" onSubmit={applyFilters}>
         <label className="search-command"><span>Search logs</span><div><Search size={21} /><input value={form.search} onChange={event => updateFilter('search', event.target.value)} placeholder="severity:ERROR payment-service" /><button type="submit" className="button primary">Search</button></div></label>

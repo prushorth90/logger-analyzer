@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LogsPage } from './LogsPage'
@@ -16,9 +16,29 @@ const log = {
   metadata: { provider: 'acme-pay', attempts: 3 },
 }
 
+class FakeEventSource {
+  static instance: FakeEventSource | null = null
+  onerror: (() => void) | null = null
+  listeners = new Map<string, (event: MessageEvent) => void>()
+  close = vi.fn()
+
+  constructor() {
+    FakeEventSource.instance = this
+  }
+
+  addEventListener(name: string, listener: EventListenerOrEventListenerObject) {
+    this.listeners.set(name, listener as (event: MessageEvent) => void)
+  }
+
+  emit(name: string, data = '') {
+    this.listeners.get(name)?.({ data } as MessageEvent)
+  }
+}
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  FakeEventSource.instance = null
 })
 
 it('filters, paginates, and opens complete log details', async () => {
@@ -96,4 +116,27 @@ it('creates, applies, and deletes a saved search', async () => {
   await waitFor(() => expect(screen.getByLabelText('Service')).toHaveValue('payment-service'))
   fireEvent.click(screen.getByRole('button', { name: 'Delete Payment errors' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Payment errors' })).not.toBeInTheDocument())
+})
+
+it('prepends a compact live event without polling the REST endpoint', async () => {
+  vi.stubGlobal('EventSource', FakeEventSource)
+  const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+    if (url === '/api/saved-searches') return new Response(JSON.stringify([]))
+    return new Response(JSON.stringify({ content: [log], pageNumber: 0, pageSize: 20, totalPages: 1, totalRecords: 1, queryExecutionMs: 3 }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<MemoryRouter><LogsPage /></MemoryRouter>)
+  await screen.findByText('Payment provider timed out')
+
+  act(() => {
+    FakeEventSource.instance?.emit('status')
+    FakeEventSource.instance?.emit('log', JSON.stringify({
+      id: 'live-log', timestamp: '2026-09-19T12:35:00Z', serviceName: 'orders-api',
+      environment: 'production', severity: 'WARN', message: 'Live order warning', traceId: 'trace-live',
+    }))
+  })
+
+  expect(await screen.findByText('Live order warning')).toBeInTheDocument()
+  expect(screen.getByText('Live')).toBeInTheDocument()
+  expect(fetchMock.mock.calls.filter(call => String(call[0]).startsWith('/api/logs?'))).toHaveLength(1)
 })
