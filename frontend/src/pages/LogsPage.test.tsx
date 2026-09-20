@@ -23,21 +23,26 @@ afterEach(() => {
 it('filters, paginates, and opens complete log details', async () => {
   const fetchMock = vi.fn().mockImplementation(async (url: string) => {
     const page = new URL(url, 'http://localhost').searchParams.get('page')
-    return new Response(JSON.stringify({ content: [log], pageNumber: Number(page), pageSize: 20, totalPages: 2, totalRecords: 21 }))
+    if (url === '/api/saved-searches') return new Response(JSON.stringify([]))
+    return new Response(JSON.stringify({ content: [log], pageNumber: Number(page), pageSize: 20, totalPages: 2, totalRecords: 21, queryExecutionMs: 8 }))
   })
   vi.stubGlobal('fetch', fetchMock)
   render(<LogsPage />)
 
   expect(await screen.findByText('Payment provider timed out')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Full-text search'), { target: { value: 'timed out' } })
+  fireEvent.change(screen.getByLabelText('Search logs'), { target: { value: 'timed out' } })
   fireEvent.change(screen.getByLabelText('Severity'), { target: { value: 'ERROR' } })
   fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'payments' } })
   fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'production' } })
+  fireEvent.change(screen.getByLabelText('Trace ID'), { target: { value: 'trace-42' } })
+  fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'OLDEST' } })
   fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
   const filteredUrl = new URL(fetchMock.mock.calls[1][0], 'http://localhost')
-  expect(Object.fromEntries(filteredUrl.searchParams)).toMatchObject({ severity: 'ERROR', serviceName: 'payments', environment: 'production', search: 'timed out', page: '0' })
+  expect(Object.fromEntries(filteredUrl.searchParams)).toMatchObject({ severity: 'ERROR', serviceName: 'payments', environment: 'production', traceId: 'trace-42', search: 'timed out', sort: 'timestamp,asc', page: '0' })
+  expect(screen.getByText('21 matching records · 8 ms')).toBeInTheDocument()
+  expect(screen.getByText('timed out').tagName).toBe('MARK')
 
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
@@ -50,7 +55,8 @@ it('filters, paginates, and opens complete log details', async () => {
 })
 
 it('shows an error with a retry action', async () => {
-  const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 503 }))
+  const fetchMock = vi.fn().mockImplementation(async (url: string) =>
+    url === '/api/saved-searches' ? new Response(JSON.stringify([])) : new Response('', { status: 503 }))
   vi.stubGlobal('fetch', fetchMock)
   render(<LogsPage />)
 

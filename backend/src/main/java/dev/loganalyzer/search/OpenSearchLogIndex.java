@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.loganalyzer.messaging.LogPersistedEventV1;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -82,12 +83,19 @@ public class OpenSearchLogIndex {
         }
 
         Map<String, Object> boolQuery = new LinkedHashMap<>();
-        boolQuery.put("must", List.of(Map.of("multi_match", Map.of(
+        if (StringUtils.hasText(criteria.text())) {
+            boolQuery.put("must", List.of(Map.of("multi_match", Map.of(
                 "query", criteria.text().trim(),
                 "fields", List.of("message", "serviceName.search", "severity.search", "traceId.search",
-                        "environment.search"),
+                    "environment.search"),
                 "type", "best_fields"))));
+        } else {
+            boolQuery.put("must", List.of(Map.of("match_all", Map.of())));
+        }
         boolQuery.put("filter", filters);
+
+        Sort.Order timestampOrder = pageable.getSort().getOrderFor("timestamp");
+        String direction = timestampOrder != null && timestampOrder.isAscending() ? "asc" : "desc";
 
         return Map.of(
                 "from", pageable.getOffset(),
@@ -95,7 +103,7 @@ public class OpenSearchLogIndex {
                 "track_total_hits", true,
                 "_source", false,
                 "query", Map.of("bool", boolQuery),
-                "sort", List.of(Map.of("timestamp", Map.of("order", "desc")), Map.of("eventId", "asc")));
+                "sort", List.of(Map.of("timestamp", Map.of("order", direction)), Map.of("eventId", "asc")));
     }
 
     private void addTermFilter(List<Map<String, Object>> filters, String field, String value) {

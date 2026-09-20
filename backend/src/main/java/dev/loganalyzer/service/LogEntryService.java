@@ -22,8 +22,10 @@ import dev.loganalyzer.repository.LogOverviewSummary;
 import dev.loganalyzer.repository.NamedCountProjection;
 import dev.loganalyzer.repository.TimeCountProjection;
 import dev.loganalyzer.search.LogSearchCriteria;
+import dev.loganalyzer.search.LogSearchQueryParser;
 import dev.loganalyzer.search.LogSearchResult;
 import dev.loganalyzer.search.OpenSearchLogIndex;
+import dev.loganalyzer.search.ParsedLogSearch;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.cache.annotation.Cacheable;
@@ -41,13 +43,16 @@ public class LogEntryService {
     private final Counter duplicateEvents;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final OpenSearchLogIndex logIndex;
+    private final LogSearchQueryParser searchQueryParser;
 
     public LogEntryService(LogEntryRepository logEntryRepository, ObjectMapper objectMapper, MeterRegistry meterRegistry,
-            ApplicationEventPublisher applicationEventPublisher, OpenSearchLogIndex logIndex) {
+            ApplicationEventPublisher applicationEventPublisher, OpenSearchLogIndex logIndex,
+            LogSearchQueryParser searchQueryParser) {
         this.logEntryRepository = logEntryRepository;
         this.objectMapper = objectMapper;
         this.applicationEventPublisher = applicationEventPublisher;
         this.logIndex = logIndex;
+        this.searchQueryParser = searchQueryParser;
         this.duplicateEvents = Counter.builder("log.ingestion.duplicates")
                 .description("Kafka log events ignored because their event ID was already persisted")
                 .register(meterRegistry);
@@ -91,9 +96,15 @@ public class LogEntryService {
             Instant endTimestamp,
             String search,
             Pageable pageable) {
-            if (StringUtils.hasText(search)) {
-                LogSearchResult result = logIndex.search(new LogSearchCriteria(search, serviceName, environment, severity,
-                    traceId, startTimestamp, endTimestamp), pageable);
+        long startedAt = System.nanoTime();
+        if (StringUtils.hasText(search)) {
+            ParsedLogSearch parsed = searchQueryParser.parse(search);
+            LogSearchResult result = logIndex.search(new LogSearchCriteria(parsed.text(),
+                    StringUtils.hasText(serviceName) ? serviceName : parsed.serviceName(),
+                    StringUtils.hasText(environment) ? environment : parsed.environment(),
+                    severity != null ? severity : parsed.severity(),
+                    StringUtils.hasText(traceId) ? traceId : parsed.traceId(),
+                    startTimestamp, endTimestamp), pageable);
                 Map<UUID, LogEntry> entriesByEventId = logEntryRepository.findByIngestionEventIdIn(result.eventIds())
                     .stream().collect(java.util.stream.Collectors.toMap(LogEntry::getIngestionEventId, entry -> entry));
                 java.util.List<LogEntryResponse> content = result.eventIds().stream()
@@ -103,7 +114,7 @@ public class LogEntryService {
                     .toList();
                 int totalPages = (int) Math.ceil((double) result.totalHits() / pageable.getPageSize());
                 return new PagedLogEntryResponse(content, pageable.getPageNumber(), pageable.getPageSize(), totalPages,
-                    result.totalHits());
+                    result.totalHits(), elapsedMilliseconds(startedAt));
             }
         Page<LogEntryResponse> page = logEntryRepository.findAll(
                 LogEntrySpecifications.withFilters(serviceName, environment, severity, traceId,
@@ -111,7 +122,11 @@ public class LogEntryService {
                 pageable)
             .map(this::toResponse);
         return new PagedLogEntryResponse(page.getContent(), page.getNumber(), page.getSize(),
-            page.getTotalPages(), page.getTotalElements());
+            page.getTotalPages(), page.getTotalElements(), elapsedMilliseconds(startedAt));
+    }
+
+    private long elapsedMilliseconds(long startedAt) {
+        return Math.max(0, (System.nanoTime() - startedAt) / 1_000_000);
     }
 
         @Cacheable(cacheNames = "log-overview",

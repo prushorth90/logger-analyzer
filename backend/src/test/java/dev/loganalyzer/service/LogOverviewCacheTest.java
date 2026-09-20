@@ -15,6 +15,7 @@ import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 import dev.loganalyzer.search.OpenSearchLogIndex;
+import dev.loganalyzer.search.LogSearchQueryParser;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
@@ -71,7 +72,8 @@ class LogOverviewCacheTest {
         @Bean
         LogEntryService logEntryService(LogEntryRepository repository) {
             return new LogEntryService(repository, new ObjectMapper(), new SimpleMeterRegistry(),
-                    mock(ApplicationEventPublisher.class), mock(OpenSearchLogIndex.class));
+                    mock(ApplicationEventPublisher.class), mock(OpenSearchLogIndex.class),
+                    new LogSearchQueryParser());
         }
 
         @Bean

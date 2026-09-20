@@ -7,5 +7,6 @@ public record PagedLogEntryResponse(
         int pageNumber,
         int pageSize,
         int totalPages,
-        long totalRecords) {
+        long totalRecords,
+        long queryExecutionMs) {
 }

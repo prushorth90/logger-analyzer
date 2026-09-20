@@ -5,7 +5,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 it('serializes filters using the backend query contract', async () => {
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    content: [], pageNumber: 2, pageSize: 25, totalPages: 3, totalRecords: 52,
+    content: [], pageNumber: 2, pageSize: 25, totalPages: 3, totalRecords: 52, queryExecutionMs: 14,
   })))
   vi.stubGlobal('fetch', fetchMock)
 
@@ -15,7 +15,9 @@ it('serializes filters using the backend query contract', async () => {
     severity: 'ERROR',
     serviceName: 'payments',
     environment: 'production',
+    traceId: 'trace-42',
     search: 'timed out',
+    sortDirection: 'OLDEST',
     startTimestamp: '2026-09-16T00:00:00.000Z',
     endTimestamp: '2026-09-17T23:59:59.000Z',
   })
@@ -27,9 +29,11 @@ it('serializes filters using the backend query contract', async () => {
     severity: 'ERROR',
     serviceName: 'payments',
     environment: 'production',
+    traceId: 'trace-42',
     search: 'timed out',
     startTimestamp: '2026-09-16T00:00:00.000Z',
     endTimestamp: '2026-09-17T23:59:59.000Z',
+    sort: 'timestamp,asc',
   })
 })
 

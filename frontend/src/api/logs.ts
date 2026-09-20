@@ -18,17 +18,20 @@ export interface PagedLogResponse {
   pageSize: number
   totalPages: number
   totalRecords: number
+  queryExecutionMs: number
 }
 
 export interface LogFilters {
   severity?: LogSeverity
   serviceName?: string
   environment?: string
+  traceId?: string
   search?: string
   startTimestamp?: string
   endTimestamp?: string
   page: number
   size: number
+  sortDirection?: 'NEWEST' | 'OLDEST'
 }
 
 function isPagedLogResponse(value: unknown): value is PagedLogResponse {
@@ -39,14 +42,20 @@ function isPagedLogResponse(value: unknown): value is PagedLogResponse {
     && typeof data.pageSize === 'number'
     && typeof data.totalPages === 'number'
     && typeof data.totalRecords === 'number'
+    && typeof data.queryExecutionMs === 'number'
 }
 
 export async function fetchLogs(filters: LogFilters, signal?: AbortSignal): Promise<PagedLogResponse> {
-  const params = new URLSearchParams({ page: String(filters.page), size: String(filters.size) })
+  const params = new URLSearchParams({
+    page: String(filters.page),
+    size: String(filters.size),
+    sort: `timestamp,${filters.sortDirection === 'OLDEST' ? 'asc' : 'desc'}`,
+  })
   const optionalFilters: [string, string | undefined][] = [
     ['severity', filters.severity],
     ['serviceName', filters.serviceName],
     ['environment', filters.environment],
+    ['traceId', filters.traceId],
     ['search', filters.search],
     ['startTimestamp', filters.startTimestamp],
     ['endTimestamp', filters.endTimestamp],

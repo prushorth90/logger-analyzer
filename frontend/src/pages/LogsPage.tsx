@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { AlertCircle, BookmarkPlus, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { fetchLogs, type LogEntry, type LogFilters, type LogSeverity, type PagedLogResponse } from '../api/logs'
+import { createSavedSearch, deleteSavedSearch, fetchSavedSearches, type SavedSearch, type SavedSearchDefinition } from '../api/savedSearches'
 
 const PAGE_SIZE = 20
-const EMPTY_FILTERS = { severity: '', serviceName: '', environment: '', search: '', startDate: '', endDate: '' }
+const EMPTY_FILTERS = { severity: '', serviceName: '', environment: '', traceId: '', search: '', startDate: '', endDate: '', sortDirection: 'NEWEST' }
 type FilterForm = typeof EMPTY_FILTERS
 
 function toTimestamp(date: string, endOfDay = false) {
@@ -24,10 +25,26 @@ function buildFilters(form: FilterForm, page: number): LogFilters {
     severity: (form.severity || undefined) as LogSeverity | undefined,
     serviceName: form.serviceName || undefined,
     environment: form.environment || undefined,
+    traceId: form.traceId || undefined,
     search: form.search || undefined,
     startTimestamp: toTimestamp(form.startDate),
     endTimestamp: toTimestamp(form.endDate, true),
+    sortDirection: form.sortDirection as LogFilters['sortDirection'],
   }
+}
+
+function toDateInput(timestamp: string | null) {
+  return timestamp?.slice(0, 10) ?? ''
+}
+
+function highlightMessage(message: string, query: string): ReactNode {
+  const text = query.replace(/(?:^|\s)(?:severity|service|environment|traceId):(?:"[^"]*"|\S+)/gi, ' ')
+  const terms = text.trim().split(/\s+/).filter(term => term.length > 1)
+  if (terms.length === 0) return message
+  const pattern = new RegExp(`(${terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi')
+  return message.split(pattern).map((part, index) =>
+    terms.some(term => term.toLowerCase() === part.toLowerCase()) ? <mark key={`${part}-${index}`}>{part}</mark> : part,
+  )
 }
 
 export function LogsPage() {
@@ -38,6 +55,10 @@ export function LogsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [requestVersion, setRequestVersion] = useState(0)
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
+  const [saveName, setSaveName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [savedSearchError, setSavedSearchError] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -51,6 +72,14 @@ export function LogsPage() {
       })
     return () => controller.abort()
   }, [filters, requestVersion])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchSavedSearches(controller.signal).then(setSavedSearches).catch((cause: unknown) => {
+      if (!controller.signal.aborted) setSavedSearchError(cause instanceof Error ? cause.message : 'Unable to load saved searches.')
+    })
+    return () => controller.abort()
+  }, [])
 
   useEffect(() => {
     if (!selectedLog) return
@@ -91,6 +120,60 @@ export function LogsPage() {
     setRequestVersion(version => version + 1)
   }
 
+  function applySavedSearch(savedSearch: SavedSearch) {
+    const nextForm: FilterForm = {
+      search: savedSearch.query ?? '',
+      severity: savedSearch.severity ?? '',
+      serviceName: savedSearch.serviceName ?? '',
+      environment: savedSearch.environment ?? '',
+      traceId: savedSearch.traceId ?? '',
+      startDate: toDateInput(savedSearch.startTimestamp),
+      endDate: toDateInput(savedSearch.endTimestamp),
+      sortDirection: savedSearch.sortDirection,
+    }
+    setForm(nextForm)
+    setFilters(buildFilters(nextForm, 0))
+    setLoading(true)
+    setError(null)
+  }
+
+  async function saveCurrentSearch(event: FormEvent) {
+    event.preventDefault()
+    if (!saveName.trim()) return
+    setSaving(true)
+    setSavedSearchError(null)
+    const definition: SavedSearchDefinition = {
+      name: saveName.trim(),
+      query: form.search || null,
+      severity: (form.severity || null) as LogSeverity | null,
+      serviceName: form.serviceName || null,
+      environment: form.environment || null,
+      traceId: form.traceId || null,
+      startTimestamp: toTimestamp(form.startDate) ?? null,
+      endTimestamp: toTimestamp(form.endDate, true) ?? null,
+      sortDirection: form.sortDirection as SavedSearchDefinition['sortDirection'],
+    }
+    try {
+      const saved = await createSavedSearch(definition)
+      setSavedSearches(current => [...current, saved].sort((left, right) => left.name.localeCompare(right.name)))
+      setSaveName('')
+    } catch (cause) {
+      setSavedSearchError(cause instanceof Error ? cause.message : 'Unable to save search.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function removeSavedSearch(id: string) {
+    setSavedSearchError(null)
+    try {
+      await deleteSavedSearch(id)
+      setSavedSearches(current => current.filter(saved => saved.id !== id))
+    } catch (cause) {
+      setSavedSearchError(cause instanceof Error ? cause.message : 'Unable to delete saved search.')
+    }
+  }
+
   return (
     <section className="page-content logs-page">
       <div className="page-heading logs-heading">
@@ -100,18 +183,31 @@ export function LogsPage() {
         </button>
       </div>
 
-      <form className="log-filters" onSubmit={applyFilters}>
-        <label className="search-filter"><span>Full-text search</span><div><Search size={15} /><input value={form.search} onChange={event => updateFilter('search', event.target.value)} placeholder="Message, service, trace ID…" /></div></label>
+      <form className="search-workbench" onSubmit={applyFilters}>
+        <label className="search-command"><span>Search logs</span><div><Search size={21} /><input value={form.search} onChange={event => updateFilter('search', event.target.value)} placeholder="severity:ERROR payment-service" /><button type="submit" className="button primary">Search</button></div></label>
+        <div className="log-filters">
         <label><span>Severity</span><select value={form.severity} onChange={event => updateFilter('severity', event.target.value)}><option value="">All levels</option><option>DEBUG</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></label>
         <label><span>Service</span><input value={form.serviceName} onChange={event => updateFilter('serviceName', event.target.value)} placeholder="Any service" /></label>
         <label><span>Environment</span><input value={form.environment} onChange={event => updateFilter('environment', event.target.value)} placeholder="Any environment" /></label>
+        <label><span>Trace ID</span><input value={form.traceId} onChange={event => updateFilter('traceId', event.target.value)} placeholder="Any trace" /></label>
         <label><span>Start date</span><input type="date" value={form.startDate} onChange={event => updateFilter('startDate', event.target.value)} /></label>
         <label><span>End date</span><input type="date" min={form.startDate || undefined} value={form.endDate} onChange={event => updateFilter('endDate', event.target.value)} /></label>
-        <div className="filter-actions"><button type="button" className="button" onClick={clearFilters}>Clear</button><button type="submit" className="button primary"><SlidersHorizontal size={14} />Apply</button></div>
+        <label><span>Sort</span><select value={form.sortDirection} onChange={event => updateFilter('sortDirection', event.target.value)}><option value="NEWEST">Newest first</option><option value="OLDEST">Oldest first</option></select></label>
+        <div className="filter-actions"><button type="button" className="button" onClick={clearFilters}>Clear</button><button type="submit" className="button">Apply filters</button></div>
+        </div>
       </form>
 
+      <div className="saved-search-bar">
+        <div className="saved-search-list" aria-label="Saved searches">
+          {savedSearches.map(saved => <span className="saved-search" key={saved.id}><button type="button" onClick={() => applySavedSearch(saved)}>{saved.name}</button><button type="button" className="saved-search-delete" aria-label={`Delete ${saved.name}`} onClick={() => removeSavedSearch(saved.id)}><Trash2 size={12} /></button></span>)}
+          {savedSearches.length === 0 && <span className="saved-search-empty">No saved searches</span>}
+        </div>
+        <form className="save-search-form" onSubmit={saveCurrentSearch}><input aria-label="Saved search name" value={saveName} maxLength={120} onChange={event => setSaveName(event.target.value)} placeholder="Search name" /><button className="button" disabled={saving || !saveName.trim()}><BookmarkPlus size={14} />Save</button></form>
+      </div>
+      {savedSearchError && <p className="saved-search-error" role="alert">{savedSearchError}</p>}
+
       <div className="log-results-heading">
-        <div><h2>Events</h2><p>{result ? `${result.totalRecords.toLocaleString()} log ${result.totalRecords === 1 ? 'entry' : 'entries'}` : 'Querying log store'}</p></div>
+        <div><h2>Events</h2><p>{result ? `${result.totalRecords.toLocaleString()} matching ${result.totalRecords === 1 ? 'record' : 'records'} · ${result.queryExecutionMs} ms` : 'Querying log store'}</p></div>
         {loading && result && <span className="table-loading"><RefreshCw size={12} className="spin" />Updating</span>}
       </div>
 
@@ -125,7 +221,7 @@ export function LogsPage() {
         ) : (
           <div className="table-scroll"><table className="logs-table"><thead><tr><th>Timestamp</th><th>Severity</th><th>Service</th><th>Environment</th><th>Message</th><th>Trace ID</th></tr></thead><tbody>
             {result?.content.map(log => <tr key={log.id} tabIndex={0} onClick={() => setSelectedLog(log)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedLog(log) }} aria-label={`View details for ${log.message}`}>
-              <td>{formatTimestamp(log.timestamp)}</td><td><span className={`severity severity-${log.severity.toLowerCase()}`}>{log.severity}</span></td><td className="service-cell">{log.serviceName}</td><td>{log.environment}</td><td className="message-cell" title={log.message}>{log.message}</td><td><code>{log.traceId ?? '—'}</code></td>
+              <td>{formatTimestamp(log.timestamp)}</td><td><span className={`severity severity-${log.severity.toLowerCase()}`}>{log.severity}</span></td><td className="service-cell">{log.serviceName}</td><td>{log.environment}</td><td className="message-cell" title={log.message}>{highlightMessage(log.message, filters.search ?? '')}</td><td><code>{log.traceId ?? '—'}</code></td>
             </tr>)}
           </tbody></table></div>
         )}

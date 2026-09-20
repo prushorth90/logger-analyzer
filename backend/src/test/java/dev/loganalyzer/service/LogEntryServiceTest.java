@@ -11,6 +11,7 @@ import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.messaging.LogPersistedEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.search.LogSearchResult;
+import dev.loganalyzer.search.LogSearchQueryParser;
 import dev.loganalyzer.search.OpenSearchLogIndex;
 import org.junit.jupiter.api.Test;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -32,7 +33,7 @@ class LogEntryServiceTest {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         LogEntryService service = new LogEntryService(repository, new ObjectMapper(), meterRegistry, eventPublisher,
-            mock(OpenSearchLogIndex.class));
+            mock(OpenSearchLogIndex.class), new LogSearchQueryParser());
         Instant timestamp = Instant.parse("2026-09-17T12:00:00Z");
         Map<String, Object> metadata = Map.of("requestMethod", "POST", "durationMs", 42);
         UUID eventId = UUID.randomUUID();
@@ -62,7 +63,7 @@ class LogEntryServiceTest {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         LogEntryService service = new LogEntryService(repository, new ObjectMapper(), meterRegistry, eventPublisher,
-            mock(OpenSearchLogIndex.class));
+            mock(OpenSearchLogIndex.class), new LogSearchQueryParser());
         UUID eventId = UUID.randomUUID();
         when(repository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(0);
@@ -104,11 +105,12 @@ class LogEntryServiceTest {
 
         assertThat(result.content()).extracting("message").containsExactly("First match", "Second match");
         assertThat(result.totalRecords()).isEqualTo(2);
+        assertThat(result.queryExecutionMs()).isGreaterThanOrEqualTo(0);
     }
 
     private LogEntryService service(LogEntryRepository repository, OpenSearchLogIndex logIndex) {
         return new LogEntryService(repository, new ObjectMapper(), new SimpleMeterRegistry(),
-                mock(ApplicationEventPublisher.class), logIndex);
+            mock(ApplicationEventPublisher.class), logIndex, new LogSearchQueryParser());
     }
 
     private dev.loganalyzer.entity.LogEntry log(UUID eventId, String message) {
