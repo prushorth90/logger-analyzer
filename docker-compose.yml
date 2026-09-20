@@ -43,6 +43,16 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OPENSEARCH_URL: http://opensearch:9200
+      OTEL_SERVICE_NAME: log-analyzer-backend
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=0.0.1
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_PROPAGATORS: tracecontext,baggage
+      OTEL_TRACES_SAMPLER: parentbased_always_on
+      OTEL_INSTRUMENTATION_LOGBACK_MDC_ENABLED: "true"
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
@@ -54,12 +64,33 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--max-time", "6", "http://localhost:8080/api/health"]
       interval: 10s
       timeout: 7s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.135.0
+    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    volumes:
+      - ./observability/otel-collector-config.yml:/etc/otelcol-contrib/config.yml:ro
+    ports:
+      - "127.0.0.1:${OTEL_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
+    depends_on:
+      jaeger:
+        condition: service_started
+    restart: unless-stopped
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.11.0
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
     restart: unless-stopped
 
   kafka:

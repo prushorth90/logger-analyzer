@@ -1,10 +1,10 @@
 # Log Analyzer
 
-A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, Kafka, Redis, and OpenSearch. It provides asynchronous REST log ingestion, durable PostgreSQL storage, and full-text log search.
+A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, PostgreSQL, Kafka, Redis, OpenSearch, and OpenTelemetry. It provides asynchronous REST log ingestion, durable PostgreSQL storage, full-text log search, and end-to-end traces in Jaeger.
 
 ## Start with Docker Compose
 
-Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 5432, 6379, 8080, 9200, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
+Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 4317, 4318, 5432, 6379, 8080, 9200, 16686, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
 
 From the repository root:
 
@@ -12,7 +12,7 @@ From the repository root:
 docker compose up --build -d --wait --wait-timeout 180
 ```
 
-The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, Kafka, and OpenSearch must become healthy, and the Kafka ingestion topics must be available, before the backend starts. The backend must become healthy before the frontend starts.
+The first build may take several minutes. Both application image builds run their tests. PostgreSQL, Redis, Kafka, OpenSearch, the OpenTelemetry Collector, and Jaeger start before the instrumented backend. The backend must become healthy before the frontend starts.
 
 | Service | Address |
 | --- | --- |
@@ -23,6 +23,9 @@ The first build may take several minutes. Both application image builds run thei
 | Redis | localhost:6379 |
 | Kafka | localhost:29092 |
 | OpenSearch | http://localhost:9200 |
+| Jaeger trace UI | http://localhost:16686 |
+| OpenTelemetry OTLP/gRPC | localhost:4317 |
+| OpenTelemetry OTLP/HTTP | localhost:4318 |
 
 Open the frontend to see the backend connection status, database availability, request duration, and recent health checks. The Health API route shows the actual JSON response. Checks refresh every 30 seconds and can also be triggered manually or paused. The latest eight checks are kept only in browser memory. Frontend status means the page has loaded; it is not an independent server probe.
 
@@ -55,6 +58,9 @@ Defaults work without an environment file. To override them, create a root `.env
 | `REDIS_PORT` | `6379` |
 | `KAFKA_PORT` | `29092` |
 | `OPENSEARCH_PORT` | `9200` |
+| `OTEL_GRPC_PORT` | `4317` |
+| `OTEL_HTTP_PORT` | `4318` |
+| `JAEGER_UI_PORT` | `16686` |
 | `LOG_INGESTION_MAX_ATTEMPTS` | `3` |
 | `LOG_INGESTION_RETRY_INTERVAL` | `2s` |
 
@@ -91,10 +97,36 @@ backend/
                   Versioned PostgreSQL schema (Flyway)
   src/test/       Health endpoint tests
   Dockerfile      Maven build and non-root Java 21 runtime
+observability/
+  otel-collector-config.yml
+                  OTLP receiver and Jaeger trace exporter
 docker-compose.yml
 ```
 
 The Kafka consumer persists logs submitted through `POST /api/logs`. Logs can be filtered through `GET /api/logs`, and the operational overview is aggregated by PostgreSQL through `GET /api/logs/overview`. Text searches use OpenSearch to identify matching event IDs and then hydrate the response from PostgreSQL. Flyway owns schema changes; Hibernate validates the schema at startup.
+
+## Distributed Tracing Architecture
+
+The backend container runs with the OpenTelemetry Java agent. It automatically instruments incoming Spring MVC requests, Kafka publishing and consumption, PostgreSQL JDBC calls, Lettuce Redis commands, and HTTP requests to OpenSearch. Application code remains independent of the OpenTelemetry SDK.
+
+```mermaid
+flowchart LR
+  Browser[Browser / API client] -->|HTTP| Backend[Spring Boot backend<br/>OpenTelemetry Java agent]
+  Backend -->|JDBC spans| PostgreSQL[(PostgreSQL)]
+  Backend -->|Redis command spans| Redis[(Redis)]
+  Backend -->|HTTP client spans| OpenSearch[(OpenSearch)]
+  Backend -->|producer span + traceparent header| Kafka[(Kafka)]
+  Kafka -->|extract traceparent<br/>consumer span| Backend
+  Backend -->|OTLP/gRPC traces| Collector[OpenTelemetry Collector]
+  Collector -->|OTLP/gRPC| Jaeger[(Jaeger)]
+  Developer[Developer] -->|query traces| Jaeger
+```
+
+The agent injects W3C `traceparent` and `tracestate` headers into Kafka records and extracts them in listener threads. An ingestion HTTP request, `logs.raw` persistence, `logs.persisted` publication, and OpenSearch indexing therefore retain one OpenTelemetry trace ID while each operation receives its own span ID.
+
+Backend console output uses Spring Boot's Logstash JSON format. Logs created inside an instrumented operation include `trace_id`, `span_id`, and `trace_flags` from the agent plus the existing business `correlationId`. The OpenTelemetry `trace_id` is technical execution context; the log payload's `traceId` remains the application field used by the trace log-correlation view.
+
+The backend exports traces only. Existing Prometheus metrics remain on `/actuator/prometheus`, and application logs remain on stdout. The Collector receives OTLP on ports 4317 and 4318, batches spans, and exports them to Jaeger. Open http://localhost:16686 and select `log-analyzer-backend` to inspect traces.
 
 ## Ingest Logs
 
@@ -277,7 +309,7 @@ In Docker, Nginx forwards `/api/*` to `backend:8080` using Docker DNS. In local 
 Use Node.js 22.12+ (or a compatible newer LTS), Java 21, and Maven 3.9+. Start the data services:
 
 ```sh
-docker compose up -d --wait postgres redis kafka kafka-init opensearch
+docker compose up -d --wait postgres redis kafka kafka-init opensearch jaeger otel-collector
 ```
 
 In one terminal:
@@ -295,7 +327,7 @@ npm ci
 npm run dev
 ```
 
-Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `KAFKA_BOOTSTRAP_SERVERS`, and `OPENSEARCH_URL` before running Maven; the backend does not read the root `.env` itself. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
+Vite prints its URL, normally http://localhost:5173. Stop the Compose frontend/backend first if they are already running (`docker compose stop frontend backend`). The backend defaults match the default Compose data services. With custom settings, explicitly export `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `KAFKA_BOOTSTRAP_SERVERS`, and `OPENSEARCH_URL` before running Maven; the backend does not read the root `.env` itself. The OpenTelemetry Java agent is attached by the backend Docker image; a backend started directly with Maven is not automatically instrumented unless an agent is supplied through `JAVA_TOOL_OPTIONS`. For a different backend port, set Spring's `SERVER_PORT` and pass `API_PROXY_TARGET=http://localhost:<port>` to `npm run dev`.
 
 ## Checks
 
@@ -318,12 +350,13 @@ To check outage handling on this disposable development stack, stop PostgreSQL w
 
 ## Scope
 
-Frontend, backend, PostgreSQL, Kafka, Redis, and OpenSearch are configured. Kafka handles asynchronous persistence through `logs.raw` and search projection through `logs.persisted`. Redis is limited to short-lived dashboard aggregation caching, PostgreSQL remains durable storage, and OpenSearch serves full-text queries. Grafana is not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included.
+Frontend, backend, PostgreSQL, Kafka, Redis, OpenSearch, the OpenTelemetry Collector, and Jaeger are configured. Kafka handles asynchronous persistence through `logs.raw` and search projection through `logs.persisted`. Redis is limited to short-lived dashboard aggregation caching, PostgreSQL remains durable storage, and OpenSearch serves full-text queries. Jaeger stores local development traces in memory. Grafana is not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included.
 
 ## Troubleshooting
 
 - If Docker cannot connect, start Docker Desktop and retry.
-- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init opensearch` and `docker compose ps`.
+- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init opensearch otel-collector jaeger` and `docker compose ps`.
+- For missing traces, verify `curl http://localhost:16686/api/services` lists `log-analyzer-backend`, then inspect Collector logs for OTLP export errors.
 - For a disconnected UI, check both the direct and proxied health URLs above. A 502 indicates the proxy cannot reach the backend; a JSON 503 indicates a database problem.
 - To apply source changes to Docker images, rerun `docker compose up --build -d --wait`.
 - UI fonts are loaded from Google Fonts, with local sans-serif/monospace fallbacks when offline. Application behavior does not depend on that font request.

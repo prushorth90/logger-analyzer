@@ -63,8 +63,12 @@ management:
       exposure:
         include: health,metrics,prometheus
 logging:
-  pattern:
-    level: "%5p [correlationId=%X{correlationId:-}]"
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service.name: ${spring.application.name}
 log-analyzer:
   opensearch:
     url: ${OPENSEARCH_URL:http://localhost:9200}
