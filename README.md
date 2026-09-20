@@ -4,7 +4,7 @@ A developer workspace built with React, TypeScript, Vite, Java 21, Spring Boot, 
 
 ## Start with Docker Compose
 
-Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 4317, 4318, 5432, 6379, 8080, 9200, 16686, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
+Prerequisites: Docker Desktop (or Docker Engine with Compose v2.20+) running, available ports 3000, 3001, 4317, 4318, 5432, 6379, 8080, 9090, 9200, 16686, and 29092, and internet access for the first image/dependency download. Host Node.js, Maven, and Java are not required for the Docker workflow.
 
 From the repository root:
 
@@ -23,6 +23,8 @@ The first build may take several minutes. Both application image builds run thei
 | Redis | localhost:6379 |
 | Kafka | localhost:29092 |
 | OpenSearch | http://localhost:9200 |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3001 |
 | Jaeger trace UI | http://localhost:16686 |
 | OpenTelemetry OTLP/gRPC | localhost:4317 |
 | OpenTelemetry OTLP/HTTP | localhost:4318 |
@@ -61,6 +63,8 @@ Defaults work without an environment file. To override them, create a root `.env
 | `OTEL_GRPC_PORT` | `4317` |
 | `OTEL_HTTP_PORT` | `4318` |
 | `JAEGER_UI_PORT` | `16686` |
+| `PROMETHEUS_PORT` | `9090` |
+| `GRAFANA_PORT` | `3001` |
 | `LOG_INGESTION_MAX_ATTEMPTS` | `3` |
 | `LOG_INGESTION_RETRY_INTERVAL` | `2s` |
 
@@ -100,6 +104,8 @@ backend/
 observability/
   otel-collector-config.yml
                   OTLP receiver and Jaeger trace exporter
+  prometheus.yml  Backend scrape configuration
+  grafana/        Provisioned data source and operations dashboards
 docker-compose.yml
 ```
 
@@ -301,6 +307,7 @@ Custom metrics use the `log_analyzer_` Prometheus prefix:
 | `log_analyzer_kafka_published_total{topic}` | Counter | Successful application Kafka sends for `logs.raw` or `logs.persisted` |
 | `log_analyzer_kafka_consumed_total{topic}` | Counter | Kafka deliveries received from `logs.raw` or `logs.persisted` |
 | `log_analyzer_ingestion_failures_total` | Counter | Failed raw publishing or consumer processing attempts |
+| `log_analyzer_ingestion_retries_total` | Counter | Kafka ingestion redelivery attempts |
 | `log_analyzer_dlq_events_total` | Counter | Events consumed from `logs.raw.dlq` |
 | `log_analyzer_ingestion_duplicates_total` | Counter | Duplicate events ignored by PostgreSQL idempotency |
 | `log_analyzer_opensearch_indexing_failures_total` | Counter | Failed OpenSearch indexing attempts |
@@ -308,6 +315,19 @@ Custom metrics use the `log_analyzer_` Prometheus prefix:
 | `log_analyzer_ingestion_end_to_end_seconds` | Timer | Time from the `logs.raw` Kafka timestamp through successful PostgreSQL persistence |
 
 The latency timers publish count, sum, maximum, and histogram buckets. Custom metrics do not use trace IDs, event IDs, log messages, service names, or exception text as labels. The only custom label is the bounded Kafka topic set.
+
+## Operations Dashboards
+
+Prometheus scrapes `http://backend:8080/actuator/prometheus` every 15 seconds over the internal Compose network and stores metrics in the `prometheus_data` volume. Grafana is preconfigured with Prometheus as its default data source and loads dashboards from version-controlled JSON on startup. Anonymous Viewer access is enabled only on the localhost-bound development port, so no manual data-source or dashboard setup is required.
+
+Open Grafana at http://localhost:3001 and use the **Log Analyzer** folder:
+
+- [Log Analyzer - Application Health](http://localhost:3001/d/log-analyzer-health/log-analyzer-application-health) shows backend availability, HTTP request rate, HTTP 5xx ratio, average request latency, JVM memory, and process/system CPU.
+- [Log Analyzer - Processing Pipeline](http://localhost:3001/d/log-analyzer-pipeline/log-analyzer-processing-pipeline) shows received logs per second, Kafka consumer throughput and available lag, p95 and average ingestion latency, p95 and average PostgreSQL persistence latency, Redis overview-cache hit ratio, OpenSearch indexing failures, ingestion retries, ingestion failures, and DLQ events.
+
+These are operator dashboards for the Log Analyzer service itself. The React application at http://localhost:3000 remains the product interface for searching, inspecting, and correlating application logs; it does not embed or duplicate Grafana dashboards.
+
+Provisioning files live under `observability/grafana`, and dashboard changes should be made there rather than through the Grafana UI. Prometheus and Grafana data are retained in named volumes across normal `docker compose down` operations.
 
 ## Health Contract
 
@@ -372,12 +392,13 @@ To check outage handling on this disposable development stack, stop PostgreSQL w
 
 ## Scope
 
-Frontend, backend, PostgreSQL, Kafka, Redis, OpenSearch, the OpenTelemetry Collector, and Jaeger are configured. Kafka handles asynchronous persistence through `logs.raw` and search projection through `logs.persisted`. Redis is limited to short-lived dashboard aggregation caching, PostgreSQL remains durable storage, and OpenSearch serves full-text queries. Jaeger stores local development traces in memory. Grafana is not installed or configured. Prometheus-format application metrics are exposed for scraping, but no Prometheus server is included.
+Frontend, backend, PostgreSQL, Kafka, Redis, OpenSearch, Prometheus, Grafana, the OpenTelemetry Collector, and Jaeger are configured. Kafka handles asynchronous persistence through `logs.raw` and search projection through `logs.persisted`. Redis is limited to short-lived product-dashboard aggregation caching, PostgreSQL remains durable storage, and OpenSearch serves full-text queries. Prometheus stores operational metrics, Grafana renders provisioned operations dashboards, and Jaeger stores local development traces in memory.
 
 ## Troubleshooting
 
 - If Docker cannot connect, start Docker Desktop and retry.
-- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init opensearch otel-collector jaeger` and `docker compose ps`.
+- For startup failures, inspect `docker compose logs backend postgres redis kafka kafka-init opensearch prometheus grafana otel-collector jaeger` and `docker compose ps`.
+- If Grafana panels are empty, confirm `http://localhost:9090/targets` reports `log-analyzer-backend` as UP and generate traffic through the React app or log generator.
 - For missing traces, verify `curl http://localhost:16686/api/services` lists `log-analyzer-backend`, then inspect Collector logs for OTLP export errors.
 - For a disconnected UI, check both the direct and proxied health URLs above. A 502 indicates the proxy cannot reach the backend; a JSON 503 indicates a database problem.
 - To apply source changes to Docker images, rerun `docker compose up --build -d --wait`.

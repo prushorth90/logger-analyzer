@@ -15,6 +15,7 @@ public class ApplicationMetrics {
     private final Counter rawMessagesConsumed;
     private final Counter persistedMessagesConsumed;
     private final Counter ingestionFailures;
+        private final Counter ingestionRetries;
     private final Counter dlqEvents;
     private final Counter duplicateEvents;
     private final Counter openSearchIndexingFailures;
@@ -32,6 +33,7 @@ public class ApplicationMetrics {
         persistedMessagesConsumed = kafkaCounter(registry, "log_analyzer.kafka.consumed",
                 "Kafka messages consumed", "logs.persisted");
         ingestionFailures = counter(registry, "log_analyzer.ingestion.failures", "Failed ingestion attempts");
+        ingestionRetries = counter(registry, "log_analyzer.ingestion.retries", "Kafka ingestion retry attempts");
         dlqEvents = counter(registry, "log_analyzer.dlq.events", "Events consumed from the dead-letter topic");
         duplicateEvents = counter(registry, "log_analyzer.ingestion.duplicates", "Duplicate ingestion events");
         openSearchIndexingFailures = counter(registry, "log_analyzer.opensearch.indexing.failures",
@@ -48,6 +50,7 @@ public class ApplicationMetrics {
     public void rawMessageConsumed() { rawMessagesConsumed.increment(); }
     public void persistedMessageConsumed() { persistedMessagesConsumed.increment(); }
     public void ingestionFailed() { ingestionFailures.increment(); }
+        public void ingestionRetried() { ingestionRetries.increment(); }
     public void dlqEventReceived() { dlqEvents.increment(); }
     public void duplicateEvent() { duplicateEvents.increment(); }
     public void openSearchIndexingFailed() { openSearchIndexingFailures.increment(); }

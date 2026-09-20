@@ -1,5 +1,6 @@
 package dev.loganalyzer.messaging;
 
+import dev.loganalyzer.observability.ApplicationMetrics;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.boot.autoconfigure.kafka.ConcurrentKafkaListenerContainerFactoryConfigurer;
@@ -44,7 +45,8 @@ public class KafkaTopicConfiguration {
             @Bean
             DefaultErrorHandler logIngestionErrorHandler(
                 KafkaTemplate<Object, Object> kafkaTemplate,
-                LogIngestionRetryProperties retryProperties) {
+                LogIngestionRetryProperties retryProperties,
+                ApplicationMetrics metrics) {
             DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
                 (record, exception) -> new TopicPartition(LogIngestionPublisher.DEAD_LETTER_TOPIC,
@@ -52,6 +54,7 @@ public class KafkaTopicConfiguration {
             DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer,
                 new FixedBackOff(retryProperties.interval().toMillis(), retryProperties.maxAttempts() - 1L));
             errorHandler.addNotRetryableExceptions(IllegalArgumentException.class);
+            errorHandler.setRetryListeners((record, exception, deliveryAttempt) -> metrics.ingestionRetried());
             return errorHandler;
             }
 

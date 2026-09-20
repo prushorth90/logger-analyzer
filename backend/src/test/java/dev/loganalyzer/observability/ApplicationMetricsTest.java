@@ -19,6 +19,7 @@ class ApplicationMetricsTest {
         metrics.rawMessageConsumed();
         metrics.persistedMessageConsumed();
         metrics.ingestionFailed();
+        metrics.ingestionRetried();
         metrics.dlqEventReceived();
         metrics.duplicateEvent();
         metrics.openSearchIndexingFailed();
@@ -31,6 +32,7 @@ class ApplicationMetricsTest {
         assertThat(registry.counter("log_analyzer.kafka.consumed", "topic", "logs.raw").count()).isEqualTo(1);
         assertThat(registry.counter("log_analyzer.kafka.consumed", "topic", "logs.persisted").count()).isEqualTo(1);
         assertThat(registry.counter("log_analyzer.ingestion.failures").count()).isEqualTo(1);
+        assertThat(registry.counter("log_analyzer.ingestion.retries").count()).isEqualTo(1);
         assertThat(registry.counter("log_analyzer.dlq.events").count()).isEqualTo(1);
         assertThat(registry.counter("log_analyzer.ingestion.duplicates").count()).isEqualTo(1);
         assertThat(registry.counter("log_analyzer.opensearch.indexing.failures").count()).isEqualTo(1);

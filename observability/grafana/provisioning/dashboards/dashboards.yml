@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: Log Analyzer Operations
+    orgId: 1
+    folder: Log Analyzer
+    folderUid: log-analyzer
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
