@@ -3,6 +3,7 @@ package dev.loganalyzer.service;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -12,6 +13,7 @@ import dev.loganalyzer.dto.LogOverviewResponse;
 import dev.loganalyzer.dto.LogOverviewResponse.NamedCount;
 import dev.loganalyzer.dto.LogOverviewResponse.TimeCount;
 import dev.loganalyzer.dto.PagedLogEntryResponse;
+import dev.loganalyzer.dto.TraceResponse;
 import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogRawEventV1;
@@ -35,6 +37,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class LogEntryService {
@@ -84,6 +88,25 @@ public class LogEntryService {
     @Transactional(readOnly = true)
     public Optional<LogEntryResponse> findById(UUID id) {
         return logEntryRepository.findById(id).map(this::toResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public TraceResponse findTrace(String traceId) {
+        if (!StringUtils.hasText(traceId) || traceId.length() > 255) {
+            throw new IllegalArgumentException("traceId must contain between 1 and 255 characters");
+        }
+        java.util.List<LogEntry> entries = logEntryRepository.findByTraceIdOrderByTimestampAscIdAsc(traceId);
+        if (entries.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Trace not found");
+        }
+
+        Instant startedAt = entries.getFirst().getTimestamp();
+        Instant endedAt = entries.getLast().getTimestamp();
+        LinkedHashSet<String> services = new LinkedHashSet<>();
+        entries.forEach(entry -> services.add(entry.getServiceName()));
+        return new TraceResponse(traceId, startedAt, endedAt,
+                java.time.Duration.between(startedAt, endedAt).toMillis(),
+                java.util.List.copyOf(services), entries.stream().map(this::toResponse).toList());
     }
 
     @Transactional(readOnly = true)

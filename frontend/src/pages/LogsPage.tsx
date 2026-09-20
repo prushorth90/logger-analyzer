@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { AlertCircle, BookmarkPlus, ChevronLeft, ChevronRight, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { fetchLogs, type LogEntry, type LogFilters, type LogSeverity, type PagedLogResponse } from '../api/logs'
 import { createSavedSearch, deleteSavedSearch, fetchSavedSearches, type SavedSearch, type SavedSearchDefinition } from '../api/savedSearches'
+import { Link } from 'react-router-dom'
 
 const PAGE_SIZE = 20
 const EMPTY_FILTERS = { severity: '', serviceName: '', environment: '', traceId: '', search: '', startDate: '', endDate: '', sortDirection: 'NEWEST' }
@@ -221,7 +222,7 @@ export function LogsPage() {
         ) : (
           <div className="table-scroll"><table className="logs-table"><thead><tr><th>Timestamp</th><th>Severity</th><th>Service</th><th>Environment</th><th>Message</th><th>Trace ID</th></tr></thead><tbody>
             {result?.content.map(log => <tr key={log.id} tabIndex={0} onClick={() => setSelectedLog(log)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedLog(log) }} aria-label={`View details for ${log.message}`}>
-              <td>{formatTimestamp(log.timestamp)}</td><td><span className={`severity severity-${log.severity.toLowerCase()}`}>{log.severity}</span></td><td className="service-cell">{log.serviceName}</td><td>{log.environment}</td><td className="message-cell" title={log.message}>{highlightMessage(log.message, filters.search ?? '')}</td><td><code>{log.traceId ?? '—'}</code></td>
+              <td>{formatTimestamp(log.timestamp)}</td><td><span className={`severity severity-${log.severity.toLowerCase()}`}>{log.severity}</span></td><td className="service-cell">{log.serviceName}</td><td>{log.environment}</td><td className="message-cell" title={log.message}>{highlightMessage(log.message, filters.search ?? '')}</td><td>{log.traceId ? <Link className="trace-link" to={`/traces/${encodeURIComponent(log.traceId)}`} onClick={event => event.stopPropagation()}><code>{log.traceId}</code></Link> : <code>—</code>}</td>
             </tr>)}
           </tbody></table></div>
         )}

@@ -15,6 +15,8 @@ import org.springframework.data.repository.query.Param;
 public interface LogEntryRepository extends JpaRepository<LogEntry, UUID>, JpaSpecificationExecutor<LogEntry> {
 	List<LogEntry> findByIngestionEventIdIn(Collection<UUID> ingestionEventIds);
 
+	List<LogEntry> findByTraceIdOrderByTimestampAscIdAsc(String traceId);
+
 	@Modifying
 	@Query(value = """
 		INSERT INTO log_entries (

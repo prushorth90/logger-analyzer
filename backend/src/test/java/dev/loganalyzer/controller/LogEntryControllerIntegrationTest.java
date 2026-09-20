@@ -111,6 +111,28 @@ class LogEntryControllerIntegrationTest {
                 }));
     }
 
+            @Test
+            void returnsTraceLogsInChronologicalOrder() throws Exception {
+            String traceId = "trace-correlation-test";
+            repository.saveAll(List.of(
+                log("2026-09-17T12:00:02Z", "payment-service", "production", Severity.ERROR,
+                    "Payment failed", traceId),
+                log("2026-09-17T12:00:00Z", "api-gateway", "production", Severity.INFO,
+                    "Request received", traceId),
+                log("2026-09-17T12:00:01Z", "order-service", "production", Severity.WARN,
+                    "Order delayed", traceId)));
+
+            mockMvc.perform(get("/api/traces/{traceId}", traceId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.traceId").value(traceId))
+                .andExpect(jsonPath("$.durationMs").value(2000))
+                .andExpect(jsonPath("$.serviceSequence[0]").value("api-gateway"))
+                .andExpect(jsonPath("$.serviceSequence[1]").value("order-service"))
+                .andExpect(jsonPath("$.serviceSequence[2]").value("payment-service"))
+                .andExpect(jsonPath("$.events[0].message").value("Request received"))
+                .andExpect(jsonPath("$.events[2].message").value("Payment failed"));
+            }
+
     @Test
     void persistsRepeatedKafkaDeliveryOnlyOnceAndCountsDuplicates() {
         UUID eventId = UUID.randomUUID();

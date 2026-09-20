@@ -5,6 +5,7 @@ import { OverviewPage } from './pages/OverviewPage'
 import { ApiPage } from './pages/ApiPage'
 import { LogsPage } from './pages/LogsPage'
 import { FailedIngestionsPage } from './pages/FailedIngestionsPage'
+import { TracePage } from './pages/TracePage'
 
 function Workspace() {
   const health = useHealth()
@@ -30,6 +31,7 @@ function Workspace() {
         <main><Routes>
           <Route path="/" element={<LogsPage />} />
           <Route path="/failed-ingestions" element={<FailedIngestionsPage />} />
+          <Route path="/traces/:traceId" element={<TracePage />} />
           <Route path="/system" element={<OverviewPage health={health} />} />
           <Route path="/api-details" element={<ApiPage health={health} />} />
           <Route path="*" element={<section className="not-found"><h1>Page not found</h1><Link to="/">Return to overview</Link></section>} />

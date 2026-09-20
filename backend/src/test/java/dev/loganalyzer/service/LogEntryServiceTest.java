@@ -110,6 +110,26 @@ class LogEntryServiceTest {
         assertThat(result.queryExecutionMs()).isGreaterThanOrEqualTo(0);
     }
 
+    @Test
+    void returnsTraceEventsAndServiceSequenceInTimestampOrder() {
+        LogEntryRepository repository = mock(LogEntryRepository.class);
+        LogEntryService service = service(repository, mock(OpenSearchLogIndex.class));
+        String traceId = "trace-42";
+        var gateway = new dev.loganalyzer.entity.LogEntry(UUID.randomUUID(),
+                Instant.parse("2026-09-17T12:00:00Z"), "api-gateway", "production", Severity.INFO,
+                "Request received", traceId, "gateway-01", Map.of());
+        var payment = new dev.loganalyzer.entity.LogEntry(UUID.randomUUID(),
+                Instant.parse("2026-09-17T12:00:01Z"), "payment-service", "production", Severity.ERROR,
+                "Payment failed", traceId, "payment-01", Map.of());
+        when(repository.findByTraceIdOrderByTimestampAscIdAsc(traceId)).thenReturn(List.of(gateway, payment));
+
+        var trace = service.findTrace(traceId);
+
+        assertThat(trace.serviceSequence()).containsExactly("api-gateway", "payment-service");
+        assertThat(trace.events()).extracting("message").containsExactly("Request received", "Payment failed");
+        assertThat(trace.durationMs()).isEqualTo(1000);
+    }
+
     private LogEntryService service(LogEntryRepository repository, OpenSearchLogIndex logIndex) {
         return new LogEntryService(repository, new ObjectMapper(), new SimpleMeterRegistry(),
             mock(ApplicationEventPublisher.class), logIndex, new LogSearchQueryParser());

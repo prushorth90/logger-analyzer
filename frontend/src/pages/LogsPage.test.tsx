@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import '@testing-library/jest-dom/vitest'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LogsPage } from './LogsPage'
+import { MemoryRouter } from 'react-router-dom'
 
 const log = {
   id: '690a930c-e0a6-42a6-bc92-f98221aba920',
@@ -27,9 +28,10 @@ it('filters, paginates, and opens complete log details', async () => {
     return new Response(JSON.stringify({ content: [log], pageNumber: Number(page), pageSize: 20, totalPages: 2, totalRecords: 21, queryExecutionMs: 8 }))
   })
   vi.stubGlobal('fetch', fetchMock)
-  render(<LogsPage />)
+  render(<MemoryRouter><LogsPage /></MemoryRouter>)
 
   expect(await screen.findByText('Payment provider timed out')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'trace-42' })).toHaveAttribute('href', '/traces/trace-42')
   fireEvent.change(screen.getByLabelText('Search logs'), { target: { value: 'timed out' } })
   fireEvent.change(screen.getByLabelText('Severity'), { target: { value: 'ERROR' } })
   fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'payments' } })
@@ -61,7 +63,7 @@ it('shows an error with a retry action', async () => {
   const fetchMock = vi.fn().mockImplementation(async (url: string) =>
     url === '/api/saved-searches' ? new Response(JSON.stringify([])) : new Response('', { status: 503 }))
   vi.stubGlobal('fetch', fetchMock)
-  render(<LogsPage />)
+  render(<MemoryRouter><LogsPage /></MemoryRouter>)
 
   expect(await screen.findByText('Logs could not be loaded')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
@@ -81,7 +83,7 @@ it('creates, applies, and deletes a saved search', async () => {
     return new Response(JSON.stringify({ content: [log], pageNumber: 0, pageSize: 20, totalPages: 1, totalRecords: 1, queryExecutionMs: 4 }))
   })
   vi.stubGlobal('fetch', fetchMock)
-  render(<LogsPage />)
+  render(<MemoryRouter><LogsPage /></MemoryRouter>)
   await screen.findByText('Payment provider timed out')
 
   fireEvent.change(screen.getByLabelText('Search logs'), { target: { value: 'payment timeout' } })

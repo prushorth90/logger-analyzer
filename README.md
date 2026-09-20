@@ -191,6 +191,12 @@ Saved searches are durable PostgreSQL records, not OpenSearch documents. The `sa
 - `POST /api/saved-searches` creates a definition and returns HTTP 201.
 - `DELETE /api/saved-searches/{id}` removes a definition and returns HTTP 204.
 
+### Trace log correlation
+
+`GET /api/traces/{traceId}` reads all PostgreSQL log rows with the exact trace ID and returns them in timestamp order. The response includes the first and last timestamps, elapsed duration, an ordered sequence of distinct services, and the complete log events. Trace IDs in the log table link to the React trace sequence view, where WARN and ERROR events receive stronger visual emphasis.
+
+This feature is log correlation only. It groups existing records by `traceId`; it does not model spans, parent-child relationships, sampling, critical paths, or other distributed tracing semantics.
+
 Indexing is asynchronous, so a newly persisted log can briefly appear in PostgreSQL-backed listings before it appears in text search. If OpenSearch is unavailable, PostgreSQL data remains intact, but text search and new projection updates are unavailable until OpenSearch recovers.
 
 ### Retries and dead-letter handling
