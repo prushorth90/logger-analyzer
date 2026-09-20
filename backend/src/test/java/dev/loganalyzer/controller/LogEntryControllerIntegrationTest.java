@@ -139,7 +139,7 @@ class LogEntryControllerIntegrationTest {
         LogRawEventV1 event = new LogRawEventV1(LogRawEventV1.SCHEMA_VERSION, eventId, "duplicate-test",
                 Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "test", Severity.ERROR,
                 "Repeated delivery", null, "billing-01", Map.of("source", "integration-test"));
-        double duplicateCountBefore = meterRegistry.counter("log.ingestion.duplicates").count();
+        double duplicateCountBefore = meterRegistry.counter("log_analyzer.ingestion.duplicates").count();
 
         for (int delivery = 0; delivery < 5; delivery++) {
             kafkaTemplate.send(LogIngestionPublisher.TOPIC, "delivery-" + delivery, event).join();
@@ -149,7 +149,7 @@ class LogEntryControllerIntegrationTest {
             assertThat(repository.findAll())
                     .filteredOn(logEntry -> eventId.equals(logEntry.getIngestionEventId()))
                     .hasSize(1);
-            assertThat(meterRegistry.counter("log.ingestion.duplicates").count())
+            assertThat(meterRegistry.counter("log_analyzer.ingestion.duplicates").count())
                     .isEqualTo(duplicateCountBefore + 4);
         });
     }

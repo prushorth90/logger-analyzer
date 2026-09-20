@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 import dev.loganalyzer.service.DeadLetterEventService;
+import dev.loganalyzer.observability.ApplicationMetrics;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -14,10 +15,13 @@ import org.springframework.stereotype.Component;
 public class DeadLetterEventConsumer {
     private final DeadLetterEventService service;
     private final LogIngestionRetryProperties retryProperties;
+    private final ApplicationMetrics metrics;
 
-    public DeadLetterEventConsumer(DeadLetterEventService service, LogIngestionRetryProperties retryProperties) {
+    public DeadLetterEventConsumer(DeadLetterEventService service, LogIngestionRetryProperties retryProperties,
+            ApplicationMetrics metrics) {
         this.service = service;
         this.retryProperties = retryProperties;
+        this.metrics = metrics;
     }
 
         @KafkaListener(
@@ -25,6 +29,7 @@ public class DeadLetterEventConsumer {
             groupId = "log-analyzer-dlq-projection-v1",
             containerFactory = "deadLetterKafkaListenerContainerFactory")
     public void consume(ConsumerRecord<String, LogRawEventV1> record) {
+        metrics.dlqEventReceived();
         String reason = headerValue(record, KafkaHeaders.DLT_EXCEPTION_MESSAGE, "Unknown ingestion failure");
         String exceptionType = headerValue(record, KafkaHeaders.DLT_EXCEPTION_CAUSE_FQCN,
             headerValue(record, KafkaHeaders.DLT_EXCEPTION_FQCN, ""));

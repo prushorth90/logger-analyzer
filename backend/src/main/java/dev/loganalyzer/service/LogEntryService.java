@@ -18,6 +18,7 @@ import dev.loganalyzer.entity.LogEntry;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.messaging.LogPersistedEventV1;
+import dev.loganalyzer.observability.ApplicationMetrics;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.repository.LogEntrySpecifications;
 import dev.loganalyzer.repository.LogOverviewSummary;
@@ -28,8 +29,8 @@ import dev.loganalyzer.search.LogSearchQueryParser;
 import dev.loganalyzer.search.LogSearchResult;
 import dev.loganalyzer.search.OpenSearchLogIndex;
 import dev.loganalyzer.search.ParsedLogSearch;
-import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
@@ -44,33 +45,42 @@ import org.springframework.web.server.ResponseStatusException;
 public class LogEntryService {
     private final LogEntryRepository logEntryRepository;
     private final ObjectMapper objectMapper;
-    private final Counter duplicateEvents;
+    private final MeterRegistry meterRegistry;
+    private final ApplicationMetrics metrics;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final OpenSearchLogIndex logIndex;
     private final LogSearchQueryParser searchQueryParser;
 
     public LogEntryService(LogEntryRepository logEntryRepository, ObjectMapper objectMapper, MeterRegistry meterRegistry,
             ApplicationEventPublisher applicationEventPublisher, OpenSearchLogIndex logIndex,
-            LogSearchQueryParser searchQueryParser) {
+            LogSearchQueryParser searchQueryParser, ApplicationMetrics metrics) {
         this.logEntryRepository = logEntryRepository;
         this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
         this.applicationEventPublisher = applicationEventPublisher;
         this.logIndex = logIndex;
         this.searchQueryParser = searchQueryParser;
-        this.duplicateEvents = Counter.builder("log.ingestion.duplicates")
-                .description("Kafka log events ignored because their event ID was already persisted")
-                .register(meterRegistry);
+        this.metrics = metrics;
     }
 
     @Transactional
-    public void persist(LogRawEventV1 event) {
-        int inserted = logEntryRepository.insertIfAbsent(
-                UUID.randomUUID(), event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
-                event.severity().name(), event.message(), event.traceId(), event.host(), serializeMetadata(event));
+    public boolean persist(LogRawEventV1 event) {
+        String metadata = serializeMetadata(event);
+        Timer.Sample sample = Timer.start(meterRegistry);
+        int inserted;
+        try {
+            inserted = logEntryRepository.insertIfAbsent(
+                    UUID.randomUUID(), event.eventId(), event.timestamp(), event.serviceName(), event.environment(),
+                    event.severity().name(), event.message(), event.traceId(), event.host(), metadata);
+        } finally {
+            sample.stop(metrics.postgresqlPersistenceTimer());
+        }
         if (inserted == 0) {
-            duplicateEvents.increment();
+            metrics.duplicateEvent();
+            return false;
         } else {
             applicationEventPublisher.publishEvent(LogPersistedEventV1.from(event));
+            return true;
         }
     }
 

@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import dev.loganalyzer.entity.Severity;
+import dev.loganalyzer.observability.ApplicationMetrics;
 import dev.loganalyzer.search.OpenSearchLogIndex;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +15,8 @@ class LogPersistedEventConsumerTest {
     @Test
     void indexesPersistedEvent() {
         OpenSearchLogIndex logIndex = mock(OpenSearchLogIndex.class);
-        LogPersistedEventConsumer consumer = new LogPersistedEventConsumer(logIndex);
+        ApplicationMetrics metrics = mock(ApplicationMetrics.class);
+        LogPersistedEventConsumer consumer = new LogPersistedEventConsumer(logIndex, metrics);
         LogPersistedEventV1 event = new LogPersistedEventV1(LogPersistedEventV1.SCHEMA_VERSION,
                 UUID.randomUUID(), Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "production",
                 Severity.ERROR, "Payment failed", "trace-123");
@@ -22,5 +24,6 @@ class LogPersistedEventConsumerTest {
         consumer.consume(event);
 
         verify(logIndex).index(event);
+        verify(metrics).persistedMessageConsumed();
     }
 }

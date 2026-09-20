@@ -7,6 +7,8 @@ import java.util.concurrent.CompletableFuture;
 import dev.loganalyzer.dto.CreateLogEntryRequest;
 import dev.loganalyzer.dto.LogIngestionAcceptedResponse;
 import dev.loganalyzer.entity.Severity;
+import dev.loganalyzer.observability.ApplicationMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -26,7 +28,8 @@ class LogIngestionPublisherTest {
         CompletableFuture<SendResult<String, LogRawEventV1>> sendResult = new CompletableFuture<>();
         when(kafkaTemplate.send(org.mockito.ArgumentMatchers.eq(LogIngestionPublisher.TOPIC),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any())).thenReturn(sendResult);
-        LogIngestionPublisher publisher = new LogIngestionPublisher(kafkaTemplate);
+        LogIngestionPublisher publisher = new LogIngestionPublisher(kafkaTemplate,
+                new ApplicationMetrics(new SimpleMeterRegistry()));
         CreateLogEntryRequest request = new CreateLogEntryRequest(
                 Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "production", Severity.ERROR,
                 "Payment failed", null, "billing-01", Map.of());
@@ -45,7 +48,9 @@ class LogIngestionPublisherTest {
         KafkaTemplate<String, LogRawEventV1> kafkaTemplate = mock(KafkaTemplate.class);
         CompletableFuture<SendResult<String, LogRawEventV1>> sendResult = new CompletableFuture<>();
         ArgumentCaptor<LogRawEventV1> eventCaptor = ArgumentCaptor.forClass(LogRawEventV1.class);
-        LogIngestionPublisher publisher = new LogIngestionPublisher(kafkaTemplate);
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        LogIngestionPublisher publisher = new LogIngestionPublisher(kafkaTemplate,
+                new ApplicationMetrics(meterRegistry));
         CreateLogEntryRequest request = new CreateLogEntryRequest(
                 Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "production", Severity.ERROR,
                 "Payment failed", "trace-123", "billing-01", Map.of("durationMs", 42));
@@ -62,5 +67,6 @@ class LogIngestionPublisherTest {
         assertThat(eventCaptor.getValue().eventId()).isEqualTo(response.eventId());
         assertThat(eventCaptor.getValue().correlationId()).isEqualTo("correlation-123");
         assertThat(eventCaptor.getValue().metadata()).containsEntry("durationMs", 42);
+        assertThat(meterRegistry.counter("log_analyzer.ingestion.received").count()).isEqualTo(1);
     }
 }

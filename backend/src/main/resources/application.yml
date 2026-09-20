@@ -61,7 +61,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,metrics,prometheus
+        include: health,prometheus
 logging:
   structured:
     format:

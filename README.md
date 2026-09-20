@@ -191,7 +191,7 @@ Every accepted request receives a UUID `LogRawEventV1.eventId` before it is publ
 
 The consumer does not use a check-then-insert sequence because two consumers could both observe that a row is absent and then race to insert it. Instead, persistence uses one atomic PostgreSQL `INSERT ... ON CONFLICT DO NOTHING` statement. The first delivery creates the row; concurrent or later deliveries with the same event ID affect zero rows and are treated as successful duplicates. This keeps duplicate handling inside the same database operation, avoids transaction rollback from a unique-constraint exception, and allows Kafka to acknowledge the duplicate safely.
 
-Each ignored duplicate increments the Micrometer counter `log.ingestion.duplicates`. It is available through `GET /actuator/metrics/log.ingestion.duplicates` and appears as `log_ingestion_duplicates_total` in the Prometheus endpoint.
+Each ignored duplicate increments the Micrometer counter `log_analyzer.ingestion.duplicates`, exposed as `log_analyzer_ingestion_duplicates_total` in Prometheus.
 
 ### PostgreSQL and OpenSearch responsibilities
 
@@ -285,7 +285,29 @@ The Overview route provides 1-hour, 6-hour, 24-hour, and 7-day periods with summ
 
 Individual log writes, single-log reads, and filtered or paginated log searches are intentionally not cached. Those paths either change durable state or need current row-level data, so caching would add invalidation complexity without the same aggregation benefit.
 
-Spring Boot Actuator publishes cache hit and miss counters at `GET /actuator/metrics/cache.gets`; Prometheus-format metrics are available at `GET /actuator/prometheus`. Look for `cache_gets_total` with `cache="log-overview"` and `result="hit"` or `result="miss"` after requesting an overview more than once.
+Spring Boot Actuator and Micrometer expose Prometheus metrics directly from the backend at `GET /actuator/prometheus`. The Compose backend port is bound to `127.0.0.1`, and Nginx explicitly rejects `/actuator/*`, so metrics are available to local development tools without being exposed through the frontend proxy. The general `/actuator/metrics` discovery endpoint is not exposed.
+
+```sh
+curl --fail http://localhost:8080/actuator/prometheus
+```
+
+Standard Micrometer binders publish JVM, process, HikariCP, HTTP server, Kafka client, and Spring Cache metrics. Redis-backed overview cache activity appears as `cache_gets_total` with fixed `cache="log-overview"` and `result="hit"` or `result="miss"` labels.
+
+Custom metrics use the `log_analyzer_` Prometheus prefix:
+
+| Prometheus metric | Type | Meaning |
+| --- | --- | --- |
+| `log_analyzer_ingestion_received_total` | Counter | Valid log requests received by the ingestion publisher |
+| `log_analyzer_kafka_published_total{topic}` | Counter | Successful application Kafka sends for `logs.raw` or `logs.persisted` |
+| `log_analyzer_kafka_consumed_total{topic}` | Counter | Kafka deliveries received from `logs.raw` or `logs.persisted` |
+| `log_analyzer_ingestion_failures_total` | Counter | Failed raw publishing or consumer processing attempts |
+| `log_analyzer_dlq_events_total` | Counter | Events consumed from `logs.raw.dlq` |
+| `log_analyzer_ingestion_duplicates_total` | Counter | Duplicate events ignored by PostgreSQL idempotency |
+| `log_analyzer_opensearch_indexing_failures_total` | Counter | Failed OpenSearch indexing attempts |
+| `log_analyzer_postgresql_persistence_seconds` | Timer | Time spent performing the atomic PostgreSQL insert |
+| `log_analyzer_ingestion_end_to_end_seconds` | Timer | Time from the `logs.raw` Kafka timestamp through successful PostgreSQL persistence |
+
+The latency timers publish count, sum, maximum, and histogram buckets. Custom metrics do not use trace IDs, event IDs, log messages, service names, or exception text as labels. The only custom label is the bounded Kafka topic set.
 
 ## Health Contract
 

@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.loganalyzer.messaging.LogPersistedEventV1;
+import dev.loganalyzer.observability.ApplicationMetrics;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -22,30 +23,38 @@ import org.springframework.web.client.RestClientResponseException;
 public class OpenSearchLogIndex {
     private final RestClient restClient;
     private final String indexName;
+    private final ApplicationMetrics metrics;
     private volatile boolean initialized;
 
     public OpenSearchLogIndex(
             RestClient.Builder restClientBuilder,
             @Value("${log-analyzer.opensearch.url}") String url,
-            @Value("${log-analyzer.opensearch.index-name}") String indexName) {
+            @Value("${log-analyzer.opensearch.index-name}") String indexName,
+            ApplicationMetrics metrics) {
         this.restClient = restClientBuilder.baseUrl(url).build();
         this.indexName = indexName;
+        this.metrics = metrics;
     }
 
     public void index(LogPersistedEventV1 event) {
-        ensureIndex();
-        restClient.put()
+        try {
+            ensureIndex();
+            restClient.put()
                 .uri("/{index}/_doc/{eventId}", indexName, event.eventId())
                 .body(Map.of(
-                        "eventId", event.eventId(),
-                        "timestamp", event.timestamp(),
-                        "message", event.message(),
-                        "serviceName", event.serviceName(),
-                        "severity", event.severity().name(),
-                        "traceId", event.traceId() == null ? "" : event.traceId(),
-                        "environment", event.environment()))
+                    "eventId", event.eventId(),
+                    "timestamp", event.timestamp(),
+                    "message", event.message(),
+                    "serviceName", event.serviceName(),
+                    "severity", event.severity().name(),
+                    "traceId", event.traceId() == null ? "" : event.traceId(),
+                    "environment", event.environment()))
                 .retrieve()
                 .toBodilessEntity();
+        } catch (RuntimeException exception) {
+            metrics.openSearchIndexingFailed();
+            throw exception;
+        }
     }
 
     public LogSearchResult search(LogSearchCriteria criteria, Pageable pageable) {

@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.messaging.LogPersistedEventV1;
+import dev.loganalyzer.observability.ApplicationMetrics;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.search.LogSearchResult;
 import dev.loganalyzer.search.LogSearchQueryParser;
@@ -33,8 +34,9 @@ class LogEntryServiceTest {
         LogEntryRepository repository = mock(LogEntryRepository.class);
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        ApplicationMetrics metrics = new ApplicationMetrics(meterRegistry);
         LogEntryService service = new LogEntryService(repository, new ObjectMapper(), meterRegistry, eventPublisher,
-            mock(OpenSearchLogIndex.class), new LogSearchQueryParser());
+            mock(OpenSearchLogIndex.class), new LogSearchQueryParser(), metrics);
         Instant timestamp = Instant.parse("2026-09-17T12:00:00Z");
         Map<String, Object> metadata = Map.of("requestMethod", "POST", "durationMs", 42);
         UUID eventId = UUID.randomUUID();
@@ -44,7 +46,7 @@ class LogEntryServiceTest {
             when(repository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
 
-        service.persist(event);
+        assertThat(service.persist(event)).isTrue();
 
         ArgumentCaptor<String> metadataCaptor = ArgumentCaptor.forClass(String.class);
         verify(repository).insertIfAbsent(any(), org.mockito.ArgumentMatchers.eq(eventId),
@@ -54,7 +56,8 @@ class LogEntryServiceTest {
                 org.mockito.ArgumentMatchers.eq("billing-01"),
                 metadataCaptor.capture());
         assertThat(metadataCaptor.getValue()).isEqualTo(new ObjectMapper().writeValueAsString(metadata));
-        assertThat(meterRegistry.counter("log.ingestion.duplicates").count()).isZero();
+        assertThat(meterRegistry.counter("log_analyzer.ingestion.duplicates").count()).isZero();
+        assertThat(meterRegistry.timer("log_analyzer.postgresql.persistence").count()).isEqualTo(1);
         verify(eventPublisher).publishEvent(org.mockito.ArgumentMatchers.isA(LogPersistedEventV1.class));
     }
 
@@ -63,8 +66,9 @@ class LogEntryServiceTest {
         LogEntryRepository repository = mock(LogEntryRepository.class);
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        ApplicationMetrics metrics = new ApplicationMetrics(meterRegistry);
         LogEntryService service = new LogEntryService(repository, new ObjectMapper(), meterRegistry, eventPublisher,
-            mock(OpenSearchLogIndex.class), new LogSearchQueryParser());
+            mock(OpenSearchLogIndex.class), new LogSearchQueryParser(), metrics);
         UUID eventId = UUID.randomUUID();
         when(repository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(0);
@@ -72,9 +76,9 @@ class LogEntryServiceTest {
                 Instant.parse("2026-09-17T12:00:00Z"), "billing-api", "production", Severity.ERROR,
                 "Payment failed", null, "billing-01", Map.of());
 
-        service.persist(event);
+        assertThat(service.persist(event)).isFalse();
 
-        assertThat(meterRegistry.counter("log.ingestion.duplicates").count()).isEqualTo(1);
+        assertThat(meterRegistry.counter("log_analyzer.ingestion.duplicates").count()).isEqualTo(1);
         verify(eventPublisher, never()).publishEvent(any());
     }
 
@@ -131,8 +135,10 @@ class LogEntryServiceTest {
     }
 
     private LogEntryService service(LogEntryRepository repository, OpenSearchLogIndex logIndex) {
-        return new LogEntryService(repository, new ObjectMapper(), new SimpleMeterRegistry(),
-            mock(ApplicationEventPublisher.class), logIndex, new LogSearchQueryParser());
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        return new LogEntryService(repository, new ObjectMapper(), meterRegistry,
+            mock(ApplicationEventPublisher.class), logIndex, new LogSearchQueryParser(),
+            new ApplicationMetrics(meterRegistry));
     }
 
     private dev.loganalyzer.entity.LogEntry log(UUID eventId, String message) {
