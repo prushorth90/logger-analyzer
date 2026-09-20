@@ -250,15 +250,15 @@ class LogEntryControllerIntegrationTest {
             }
 
             @Test
-            void sortsByRequestedFieldAndDirection() throws Exception {
+            void sortsOldestLogsFirst() throws Exception {
             repository.saveAll(List.of(
                 log("2026-09-17T12:00:00Z", "orders-api", "production", Severity.INFO, "Orders", null),
                 log("2026-09-17T12:05:00Z", "auth-api", "production", Severity.INFO, "Auth", null)));
 
-            mockMvc.perform(get("/api/logs").param("sort", "serviceName,asc"))
+            mockMvc.perform(get("/api/logs").param("sort", "timestamp,asc"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].serviceName").value("auth-api"))
-                .andExpect(jsonPath("$.content[1].serviceName").value("orders-api"));
+                .andExpect(jsonPath("$.content[0].serviceName").value("orders-api"))
+                .andExpect(jsonPath("$.content[1].serviceName").value("auth-api"));
             }
 
             private LogEntry log(String timestamp, String serviceName, String environment, Severity severity,

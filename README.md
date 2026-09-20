@@ -175,6 +175,22 @@ The index mapping uses:
 
 When `GET /api/logs` includes the `search` parameter, OpenSearch performs multi-field text matching across message, service name, severity, trace ID, and environment. Any structured service, severity, trace ID, environment, and timestamp parameters are applied as OpenSearch filters in the same query. OpenSearch returns ordered event IDs; the backend loads those records from PostgreSQL before returning them. Without `search`, filtering and pagination remain PostgreSQL queries.
 
+The search box supports plain terms and four allowlisted field tokens:
+
+```text
+severity:ERROR service:payment-service environment:production traceId:trace-42 payment timeout
+```
+
+Token values may be quoted when they contain spaces. Unknown prefixes are treated as ordinary search text; the API never accepts OpenSearch query JSON, scripts, regular expressions, or arbitrary field names. Explicit `severity`, `serviceName`, `environment`, and `traceId` query parameters override values embedded in the search string. Invalid severity values and queries longer than 500 characters return HTTP 400.
+
+Sorting is restricted to `sort=timestamp,desc` for newest-first or `sort=timestamp,asc` for oldest-first. Search responses include `totalRecords` and `queryExecutionMs`. The React explorer displays both values and highlights plain query terms in returned messages.
+
+Saved searches are durable PostgreSQL records, not OpenSearch documents. The `saved_searches` table stores a typed name, query, structured filters, timestamp range, sort direction, and creation time. This prevents saved definitions from containing arbitrary search-engine JSON.
+
+- `GET /api/saved-searches` lists saved definitions by name.
+- `POST /api/saved-searches` creates a definition and returns HTTP 201.
+- `DELETE /api/saved-searches/{id}` removes a definition and returns HTTP 204.
+
 Indexing is asynchronous, so a newly persisted log can briefly appear in PostgreSQL-backed listings before it appears in text search. If OpenSearch is unavailable, PostgreSQL data remains intact, but text search and new projection updates are unavailable until OpenSearch recovers.
 
 ### Retries and dead-letter handling

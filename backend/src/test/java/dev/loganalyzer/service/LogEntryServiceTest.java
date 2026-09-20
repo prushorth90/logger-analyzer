@@ -18,6 +18,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -101,7 +102,8 @@ class LogEntryServiceTest {
         when(repository.findByIngestionEventIdIn(List.of(firstEventId, secondEventId)))
                 .thenReturn(List.of(second, first));
 
-        var result = service.findAll(null, null, null, null, null, null, "payment", PageRequest.of(0, 20));
+        var result = service.findAll(null, null, null, null, null, null, "payment",
+            PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "timestamp")));
 
         assertThat(result.content()).extracting("message").containsExactly("First match", "Second match");
         assertThat(result.totalRecords()).isEqualTo(2);

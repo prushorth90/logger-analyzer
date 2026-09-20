@@ -96,6 +96,7 @@ public class LogEntryService {
             Instant endTimestamp,
             String search,
             Pageable pageable) {
+        validateSort(pageable);
         long startedAt = System.nanoTime();
         if (StringUtils.hasText(search)) {
             ParsedLogSearch parsed = searchQueryParser.parse(search);
@@ -127,6 +128,13 @@ public class LogEntryService {
 
     private long elapsedMilliseconds(long startedAt) {
         return Math.max(0, (System.nanoTime() - startedAt) / 1_000_000);
+    }
+
+    private void validateSort(Pageable pageable) {
+        if (pageable.getSort().isUnsorted() || pageable.getSort().stream().count() != 1
+                || pageable.getSort().getOrderFor("timestamp") == null) {
+            throw new IllegalArgumentException("sort must be timestamp,asc or timestamp,desc");
+        }
     }
 
         @Cacheable(cacheNames = "log-overview",
