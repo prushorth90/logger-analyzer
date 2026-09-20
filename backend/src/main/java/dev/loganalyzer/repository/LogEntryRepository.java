@@ -17,6 +17,9 @@ public interface LogEntryRepository extends JpaRepository<LogEntry, UUID>, JpaSp
 
 	List<LogEntry> findByTraceIdOrderByTimestampAscIdAsc(String traceId);
 
+	long countByServiceNameAndSeverityAndTimestampGreaterThanEqualAndTimestampLessThan(
+			String serviceName, dev.loganalyzer.entity.Severity severity, Instant startTimestamp, Instant endTimestamp);
+
 	@Modifying
 	@Query(value = """
 		INSERT INTO log_entries (

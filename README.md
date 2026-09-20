@@ -243,6 +243,26 @@ Saved searches are durable PostgreSQL records, not OpenSearch documents. The `sa
 
 This feature is log correlation only. It groups existing records by `traceId`; it does not model spans, parent-child relationships, sampling, critical paths, or other distributed tracing semantics.
 
+### Alert rules
+
+The Alerts route defines simple PostgreSQL-backed threshold rules of the form:
+
+```text
+ERROR count for payment-service > 20 during 5 minutes
+```
+
+Rules contain a name, exact service name, count threshold, evaluation window, cooldown, and active flag. This initial implementation intentionally supports only ERROR-count greater-than conditions; it does not expose a general expression language. The scheduled evaluator runs every 30 seconds by default (`ALERT_EVALUATION_INTERVAL`) and counts recent durable PostgreSQL log rows, so OpenSearch availability does not affect alert decisions.
+
+Alert lifecycle:
+
+- A true condition creates one `OPEN` alert when no active alert exists and cooldown has expired.
+- Continued true evaluations do not create duplicates. A PostgreSQL partial unique index permits only one `OPEN` or `ACKNOWLEDGED` alert per rule.
+- An operator may move `OPEN` to `ACKNOWLEDGED`, or resolve either active state manually.
+- When the condition clears, the evaluator automatically moves either active state to `RESOLVED`.
+- Cooldown starts at resolution and suppresses reopening until it expires. Pausing a rule resolves its active alert.
+
+The backend exposes `GET` and `POST /api/alerts/rules`, `PATCH /api/alerts/rules/{id}/active`, paginated `GET /api/alerts`, and `POST /api/alerts/{id}/acknowledge|resolve`. Alerts are currently visible only in the React Alerts page; email, paging, and other external notifications are deliberately out of scope.
+
 Indexing is asynchronous, so a newly persisted log can briefly appear in PostgreSQL-backed listings before it appears in text search. If OpenSearch is unavailable, PostgreSQL data remains intact, but text search and new projection updates are unavailable until OpenSearch recovers.
 
 ### Retries and dead-letter handling

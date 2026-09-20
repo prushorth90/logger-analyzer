@@ -11,8 +11,11 @@ import dev.loganalyzer.entity.Severity;
 import dev.loganalyzer.messaging.LogIngestionPublisher;
 import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
+import dev.loganalyzer.repository.AlertRepository;
+import dev.loganalyzer.repository.AlertRuleRepository;
 import dev.loganalyzer.search.LogSearchResult;
 import dev.loganalyzer.search.OpenSearchLogIndex;
+import dev.loganalyzer.service.AlertRuleEvaluator;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,11 +75,22 @@ class LogEntryControllerIntegrationTest {
     @Autowired
     private MeterRegistry meterRegistry;
 
+    @Autowired
+    private AlertRepository alertRepository;
+
+    @Autowired
+    private AlertRuleRepository alertRuleRepository;
+
+    @Autowired
+    private AlertRuleEvaluator alertRuleEvaluator;
+
     @MockitoBean
     private OpenSearchLogIndex logIndex;
 
     @BeforeEach
     void clearLogs() {
+        alertRepository.deleteAll();
+        alertRuleRepository.deleteAll();
         repository.deleteAll();
     }
 
@@ -153,6 +167,51 @@ class LogEntryControllerIntegrationTest {
                     .isEqualTo(duplicateCountBefore + 4);
         });
     }
+
+        @Test
+        void createsAcknowledgesAndAutomaticallyResolvesAlert() throws Exception {
+        mockMvc.perform(post("/api/alerts/rules")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "name": "Payment errors",
+                      "serviceName": "payment-service",
+                      "thresholdCount": 2,
+                      "windowMinutes": 5,
+                      "cooldownMinutes": 30
+                    }
+                    """))
+            .andExpect(status().isCreated());
+
+        Instant now = Instant.now();
+        repository.saveAll(List.of(
+            log(now.minusSeconds(30).toString(), "payment-service", "production", Severity.ERROR,
+                "Payment failed 1", null),
+            log(now.minusSeconds(20).toString(), "payment-service", "production", Severity.ERROR,
+                "Payment failed 2", null),
+            log(now.minusSeconds(10).toString(), "payment-service", "production", Severity.ERROR,
+                "Payment failed 3", null)));
+
+        alertRuleEvaluator.evaluate();
+        UUID alertId = alertRepository.findAll().getFirst().getId();
+
+        mockMvc.perform(get("/api/alerts").param("status", "OPEN"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].observedCount").value(3));
+
+        mockMvc.perform(post("/api/alerts/{id}/acknowledge", alertId))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("ACKNOWLEDGED"));
+
+        repository.deleteAll();
+        alertRuleEvaluator.evaluate();
+
+        mockMvc.perform(get("/api/alerts").param("status", "RESOLVED"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].resolutionReason").value("Condition cleared"));
+        }
 
     @Test
     void rejectsInvalidLogEntry() throws Exception {

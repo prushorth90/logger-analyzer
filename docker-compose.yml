@@ -43,6 +43,7 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OPENSEARCH_URL: http://opensearch:9200
+      ALERT_EVALUATION_INTERVAL: ${ALERT_EVALUATION_INTERVAL:-30s}
       OTEL_SERVICE_NAME: log-analyzer-backend
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=0.0.1
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317

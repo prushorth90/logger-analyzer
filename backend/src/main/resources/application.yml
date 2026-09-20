@@ -70,6 +70,8 @@ logging:
       add:
         service.name: ${spring.application.name}
 log-analyzer:
+  alerts:
+    evaluation-interval: ${ALERT_EVALUATION_INTERVAL:30s}
   opensearch:
     url: ${OPENSEARCH_URL:http://localhost:9200}
     index-name: ${OPENSEARCH_INDEX_NAME:logs-v1}
