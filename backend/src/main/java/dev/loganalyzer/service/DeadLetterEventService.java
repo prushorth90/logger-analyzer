@@ -9,6 +9,7 @@ import dev.loganalyzer.dto.PagedDeadLetterEventResponse;
 import dev.loganalyzer.entity.DeadLetterEvent;
 import dev.loganalyzer.messaging.LogIngestionPublisher;
 import dev.loganalyzer.messaging.LogRawEventV1;
+import dev.loganalyzer.messaging.DemoIngestionFailurePolicy;
 import dev.loganalyzer.repository.DeadLetterEventRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,10 +24,13 @@ public class DeadLetterEventService {
 
     private final DeadLetterEventRepository repository;
     private final LogIngestionPublisher publisher;
+    private final DemoIngestionFailurePolicy demoFailurePolicy;
 
-    public DeadLetterEventService(DeadLetterEventRepository repository, LogIngestionPublisher publisher) {
+    public DeadLetterEventService(DeadLetterEventRepository repository, LogIngestionPublisher publisher,
+            DemoIngestionFailurePolicy demoFailurePolicy) {
         this.repository = repository;
         this.publisher = publisher;
+        this.demoFailurePolicy = demoFailurePolicy;
     }
 
     @Transactional
@@ -51,7 +55,7 @@ public class DeadLetterEventService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Manual retry limit reached");
         }
 
-        publisher.republish(event.getOriginalEvent());
+        publisher.republish(demoFailurePolicy.prepareManualReplay(event.getOriginalEvent()));
         Instant retriedAt = Instant.now();
         event.markRetried(retriedAt);
         return new DeadLetterRetryResponse(ingestionEventId, event.getManualRetryCount(), retriedAt, "accepted");

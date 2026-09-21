@@ -70,6 +70,8 @@ logging:
       add:
         service.name: ${spring.application.name}
 log-analyzer:
+  demo:
+    ingestion-failures-enabled: ${DEMO_INGESTION_FAILURES_ENABLED:false}
   alerts:
     evaluation-interval: ${ALERT_EVALUATION_INTERVAL:30s}
   opensearch:

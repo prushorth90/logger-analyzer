@@ -21,7 +21,8 @@ class LogRawEventConsumerTest {
     void countsConsumptionAndSuccessfulEndToEndLatency() {
         LogEntryService service = mock(LogEntryService.class);
         ApplicationMetrics metrics = mock(ApplicationMetrics.class);
-        LogRawEventConsumer consumer = new LogRawEventConsumer(service, metrics);
+        LogRawEventConsumer consumer = new LogRawEventConsumer(service, metrics,
+            new DemoIngestionFailurePolicy(false));
         ConsumerRecord<String, LogRawEventV1> record = record();
         when(service.persist(record.value())).thenReturn(true);
 
@@ -35,7 +36,8 @@ class LogRawEventConsumerTest {
     void countsFailedConsumerAttemptAndRethrows() {
         LogEntryService service = mock(LogEntryService.class);
         ApplicationMetrics metrics = mock(ApplicationMetrics.class);
-        LogRawEventConsumer consumer = new LogRawEventConsumer(service, metrics);
+        LogRawEventConsumer consumer = new LogRawEventConsumer(service, metrics,
+            new DemoIngestionFailurePolicy(false));
         ConsumerRecord<String, LogRawEventV1> record = record();
         when(service.persist(record.value())).thenThrow(new IllegalStateException("database unavailable"));
 
@@ -45,10 +47,32 @@ class LogRawEventConsumerTest {
         verify(metrics).ingestionFailed();
     }
 
+        @Test
+        void demoMarkerThrowsRetryableFailureWithoutPersisting() {
+        LogEntryService service = mock(LogEntryService.class);
+        ApplicationMetrics metrics = mock(ApplicationMetrics.class);
+        LogRawEventConsumer consumer = new LogRawEventConsumer(service, metrics,
+            new DemoIngestionFailurePolicy(true));
+        ConsumerRecord<String, LogRawEventV1> record = record(Map.of(
+            DemoIngestionFailurePolicy.METADATA_KEY, DemoIngestionFailurePolicy.METADATA_VALUE));
+
+        assertThatThrownBy(() -> consumer.consume(record))
+            .isInstanceOf(DemoIngestionException.class)
+            .hasMessageContaining("logs.raw.dlq");
+
+        verify(service, org.mockito.Mockito.never()).persist(any());
+        verify(metrics).ingestionFailed();
+        }
+
     @SuppressWarnings("unchecked")
     private ConsumerRecord<String, LogRawEventV1> record() {
+        return record(Map.of());
+    }
+
+    @SuppressWarnings("unchecked")
+    private ConsumerRecord<String, LogRawEventV1> record(Map<String, Object> metadata) {
         LogRawEventV1 event = new LogRawEventV1(LogRawEventV1.SCHEMA_VERSION, UUID.randomUUID(), "correlation-123",
-                Instant.now(), "billing-api", "production", Severity.INFO, "Accepted", null, "billing-01", Map.of());
+                Instant.now(), "billing-api", "production", Severity.INFO, "Accepted", null, "billing-01", metadata);
         ConsumerRecord<String, LogRawEventV1> record = mock(ConsumerRecord.class);
         when(record.value()).thenReturn(event);
         when(record.timestamp()).thenReturn(System.currentTimeMillis() - 25);

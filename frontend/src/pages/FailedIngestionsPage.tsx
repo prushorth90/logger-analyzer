@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react'
-import { fetchDeadLetterEvents, retryDeadLetterEvent, type PagedDeadLetterEventResponse } from '../api/deadLetters'
+import { AlertTriangle, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { fetchDeadLetterEvents, retryDeadLetterEvent, type DeadLetterEvent, type PagedDeadLetterEventResponse } from '../api/deadLetters'
+
+function summarizeFailure(reason: string) {
+  if (reason.includes('Demo ingestion failure requested')) {
+    return 'Simulated processing failure for DLQ demo'
+  }
+  const message = reason.split(';').map(part => part.trim()).filter(Boolean).at(-1)
+  return message || reason
+}
 
 export function FailedIngestionsPage() {
   const [page, setPage] = useState(0)
@@ -8,6 +16,7 @@ export function FailedIngestionsPage() {
   const [result, setResult] = useState<PagedDeadLetterEventResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [selectedFailure, setSelectedFailure] = useState<DeadLetterEvent | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -63,7 +72,7 @@ export function FailedIngestionsPage() {
               <td>{new Date(event.failedAt).toLocaleString()}</td>
               <td>{event.originalEvent.serviceName}</td>
               <td><code title={event.ingestionEventId}>{event.ingestionEventId}</code></td>
-              <td className="failure-reason" title={event.failureReason}>{event.failureReason}</td>
+              <td><button className="failure-reason" title={event.failureReason} onClick={() => setSelectedFailure(event)}>{summarizeFailure(event.failureReason)}</button></td>
               <td>{event.retryCount} auto / {event.manualRetryCount} manual</td>
               <td><button className="button" disabled={retryingId === event.ingestionEventId || event.manualRetryCount >= 3} onClick={() => retry(event.ingestionEventId)} title="Republish this event to logs.raw"><RotateCcw size={13} />{retryingId === event.ingestionEventId ? 'Retrying' : 'Retry'}</button></td>
             </tr>)}
@@ -79,5 +88,9 @@ export function FailedIngestionsPage() {
         <button className="icon-button" aria-label="Next page" disabled={!result || page + 1 >= result.totalPages} onClick={() => changePage(page + 1)}><ChevronRight size={15} /></button>
       </div>
     </div>
+    {selectedFailure && <><button className="drawer-backdrop" aria-label="Close failure details" onClick={() => setSelectedFailure(null)} /><aside className="log-drawer" role="dialog" aria-modal="true" aria-labelledby="failure-detail-title">
+      <div className="drawer-header"><div><p className="eyebrow">DEAD-LETTER EVENT</p><h2 id="failure-detail-title">Failure details</h2></div><button className="icon-button" aria-label="Close details" onClick={() => setSelectedFailure(null)}><X size={18} /></button></div>
+      <div className="drawer-content"><dl className="log-facts"><div><dt>Service</dt><dd>{selectedFailure.originalEvent.serviceName}</dd></div><div><dt>Retries</dt><dd>{selectedFailure.retryCount} automatic / {selectedFailure.manualRetryCount} manual</dd></div><div className="wide"><dt>Event ID</dt><dd><code>{selectedFailure.ingestionEventId}</code></dd></div></dl><section className="detail-section"><h3>Summary</h3><p>{summarizeFailure(selectedFailure.failureReason)}</p></section><section className="detail-section"><h3>Full exception</h3><pre>{selectedFailure.failureReason}</pre></section><section className="detail-section"><h3>Original event</h3><pre>{JSON.stringify(selectedFailure.originalEvent, null, 2)}</pre></section></div>
+    </aside></>}
   </section>
 }

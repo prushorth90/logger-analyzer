@@ -51,3 +51,25 @@ it('shows failure details and explicitly retries an event', async () => {
   ))
   expect(await screen.findByText('2 auto / 1 manual')).toBeInTheDocument()
 })
+
+it('summarizes the DLQ demo failure and keeps the full exception in details', async () => {
+  const fullException = "Listener method 'public void dev.loganalyzer.messaging.LogRawEventConsumer.consume(...)' threw exception; Demo ingestion failure requested; retrying before logs.raw.dlq"
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    content: [{ ...failedEvent, failureReason: fullException, originalEvent: { ...failedEvent.originalEvent, serviceName: 'dlq-demo-service' } }],
+    pageNumber: 0,
+    pageSize: 20,
+    totalPages: 1,
+    totalRecords: 1,
+  }))))
+
+  render(<FailedIngestionsPage />)
+
+  const summary = await screen.findByRole('button', { name: 'Simulated processing failure for DLQ demo' })
+  expect(summary).toHaveAttribute('title', fullException)
+  expect(screen.queryByText(fullException)).not.toBeInTheDocument()
+
+  fireEvent.click(summary)
+  expect(screen.getByRole('dialog', { name: 'Failure details' })).toBeInTheDocument()
+  expect(screen.getByText(fullException)).toBeInTheDocument()
+  expect(screen.getByText(/"serviceName": "dlq-demo-service"/)).toBeInTheDocument()
+})

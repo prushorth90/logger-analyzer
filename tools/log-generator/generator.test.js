@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import test from 'node:test'
 
-import { createLog, createTraceDemoLogs, run } from './generator.js'
+import { createDlqDemoLog, createLog, createTraceDemoLogs, run } from './generator.js'
 
 const messages = {
   DEBUG: ['debug {operation}'],
@@ -114,6 +114,51 @@ test('trace-demo posts exactly four deterministic events and stops', async () =>
     assert.deepEqual(requests.map(request => request.body.serviceName), [
       'api-gateway', 'order-service', 'payment-service', 'inventory-service',
     ])
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  }
+})
+
+test('createDlqDemoLog creates one isolated retryable failure marker', () => {
+  const log = createDlqDemoLog(
+    { environment: 'demo', traceId: 'demo-dlq-test-001' },
+    new Date('2026-09-20T12:00:00.000Z'),
+  )
+
+  assert.equal(log.timestamp, '2026-09-20T12:00:00.000Z')
+  assert.equal(log.serviceName, 'dlq-demo-service')
+  assert.equal(log.severity, 'ERROR')
+  assert.equal(log.traceId, 'demo-dlq-test-001')
+  assert.equal(log.metadata.scenario, 'dlq-demo')
+  assert.equal(log.metadata.demoFailure, 'retry-to-dlq')
+})
+
+test('dlq-demo posts exactly one event and prints the accepted event ID', async () => {
+  const requests = []
+  const server = createServer((request, response) => {
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => {
+      requests.push(JSON.parse(body))
+      response.writeHead(202, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ eventId: 'demo-event-id', status: 'accepted' }))
+    })
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+
+  try {
+    const address = server.address()
+    const result = await run({
+      apiUrl: `http://127.0.0.1:${address.port}/api/logs`,
+      environment: 'demo',
+      scenario: 'dlq-demo',
+      traceId: 'demo-dlq-test-001',
+    })
+
+    assert.deepEqual(result, { sent: 1, failed: 0, eventId: 'demo-event-id' })
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].metadata.demoFailure, 'retry-to-dlq')
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   }

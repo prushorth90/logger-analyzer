@@ -67,6 +67,8 @@ Defaults work without an environment file. To override them, create a root `.env
 | `GRAFANA_PORT` | `3001` |
 | `LOG_INGESTION_MAX_ATTEMPTS` | `3` |
 | `LOG_INGESTION_RETRY_INTERVAL` | `2s` |
+| `DEMO_INGESTION_FAILURES_ENABLED` | `true` in Compose |
+| `DLQ_DEMO_TRACE_ID` | `demo-dlq-trace-001` |
 
 For a port conflict, choose a free host port, for example:
 
@@ -283,6 +285,43 @@ Manual retry is an explicit operator action. It republishes the stored original 
 curl --fail-with-body -X POST \
   http://localhost:8080/api/dead-letter-events/INGESTION_EVENT_ID/retry
 ```
+
+#### Generate the retry and DLQ demo
+
+Local Compose enables one isolated demo failure marker by default. Normal events are unaffected; only an event with exact metadata `"demoFailure":"retry-to-dlq"` throws the demo-only retryable exception. The one-shot generator mode sends that marker through the normal `POST /api/logs` path:
+
+```sh
+docker compose --profile demo run --rm dlq-demo
+```
+
+The command sends one event from `dlq-demo-service`, exits immediately, and prints its ingestion `eventId`. With the default retry settings, allow about five seconds for the initial attempt plus two automatic retries. The exhausted Kafka record moves to `logs.raw.dlq`, and the existing DLQ consumer stores its original event, failure reason, retry count, and failure timestamp in PostgreSQL.
+
+Open the Failed ingestion page and refresh:
+
+http://localhost:3000/failed-ingestions
+
+The row shows `dlq-demo-service`, the original event ID, the reason **Demo ingestion failure requested; retrying before logs.raw.dlq**, and `2 auto / 0 manual`. Click **Retry** to use the existing manual replay endpoint. For this demo event only, replay removes the `demoFailure` marker while preserving the original event ID and all other metadata. The normal consumer then persists it successfully; the audit row remains and changes to `2 auto / 1 manual`.
+
+The equivalent host command is:
+
+```sh
+node tools/log-generator/generator.js \
+  --scenario dlq-demo \
+  --trace-id demo-dlq-trace-001 \
+  --environment demo \
+  --url http://127.0.0.1:8080/api/logs
+```
+
+Screen-recording sequence:
+
+1. Open the empty or existing [Failed ingestion page](http://localhost:3000/failed-ingestions).
+2. In a terminal, run `docker compose --profile demo run --rm dlq-demo` and point out the printed `eventId`.
+3. Mention that the backend is making three total attempts; wait about five seconds.
+4. Refresh the page and show the service, original event ID, deterministic reason, and `2 auto / 0 manual`.
+5. Click **Retry** and show the manual count change to `1`.
+6. Open the Logs page and filter by service `dlq-demo-service` to show that replay reached PostgreSQL through the normal Kafka consumer.
+
+Set `DEMO_INGESTION_FAILURES_ENABLED=false` to disable the marker entirely. This demo does not stop PostgreSQL, affect unrelated events, bypass Kafka, or insert a `dead_letter_events` row directly.
 
 ### Generate development traffic
 

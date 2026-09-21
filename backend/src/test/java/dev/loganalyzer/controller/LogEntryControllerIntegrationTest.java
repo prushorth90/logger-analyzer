@@ -13,6 +13,7 @@ import dev.loganalyzer.messaging.LogRawEventV1;
 import dev.loganalyzer.repository.LogEntryRepository;
 import dev.loganalyzer.repository.AlertRepository;
 import dev.loganalyzer.repository.AlertRuleRepository;
+import dev.loganalyzer.repository.DeadLetterEventRepository;
 import dev.loganalyzer.search.LogSearchResult;
 import dev.loganalyzer.search.OpenSearchLogIndex;
 import dev.loganalyzer.service.AlertRuleEvaluator;
@@ -28,6 +29,9 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -61,6 +65,8 @@ class LogEntryControllerIntegrationTest {
         registry.add("spring.cache.type", () -> "none");
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
         registry.add("log-analyzer.opensearch.indexing-enabled", () -> "false");
+        registry.add("log-analyzer.demo.ingestion-failures-enabled", () -> "true");
+        registry.add("log-analyzer.ingestion.retry.interval", () -> "10ms");
     }
 
     @Autowired
@@ -84,6 +90,12 @@ class LogEntryControllerIntegrationTest {
     @Autowired
     private AlertRuleEvaluator alertRuleEvaluator;
 
+    @Autowired
+    private DeadLetterEventRepository deadLetterEventRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @MockitoBean
     private OpenSearchLogIndex logIndex;
 
@@ -91,6 +103,7 @@ class LogEntryControllerIntegrationTest {
     void clearLogs() {
         alertRepository.deleteAll();
         alertRuleRepository.deleteAll();
+        deadLetterEventRepository.deleteAll();
         repository.deleteAll();
     }
 
@@ -124,6 +137,46 @@ class LogEntryControllerIntegrationTest {
                     assertThat(logEntry.getMessage()).isEqualTo("Payment failed");
                 }));
     }
+
+        @Test
+        void retriesDemoFailureMovesItToDlqAndManualReplayPersistsIt() throws Exception {
+        MvcResult accepted = mockMvc.perform(post("/api/logs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "timestamp": "2026-09-20T12:00:00Z",
+                      "serviceName": "dlq-demo-service",
+                      "environment": "demo",
+                      "severity": "ERROR",
+                      "message": "Deterministic demo failure for Kafka retry and DLQ handling",
+                      "traceId": "demo-dlq-trace-test",
+                      "host": "dlq-demo-01",
+                      "metadata": {
+                        "scenario": "dlq-demo",
+                        "demoFailure": "retry-to-dlq"
+                      }
+                    }
+                    """))
+            .andExpect(status().isAccepted())
+            .andReturn();
+        JsonNode acceptedBody = objectMapper.readTree(accepted.getResponse().getContentAsString());
+        UUID eventId = UUID.fromString(acceptedBody.path("eventId").asText());
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() ->
+            assertThat(deadLetterEventRepository.findByIngestionEventId(eventId)).hasValueSatisfying(event -> {
+                assertThat(event.getRetryCount()).isEqualTo(2);
+                assertThat(event.getFailureReason()).contains("Demo ingestion failure requested");
+                assertThat(event.getOriginalEvent().serviceName()).isEqualTo("dlq-demo-service");
+            }));
+        assertThat(repository.findAll()).noneMatch(log -> eventId.equals(log.getIngestionEventId()));
+
+        mockMvc.perform(post("/api/dead-letter-events/{eventId}/retry", eventId))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.manualRetryCount").value(1));
+
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() ->
+            assertThat(repository.findAll()).anyMatch(log -> eventId.equals(log.getIngestionEventId())));
+        }
 
             @Test
             void returnsTraceLogsInChronologicalOrder() throws Exception {

@@ -177,7 +177,8 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 22px
 .failed-table th:nth-child(6) { width: 100px; }
 .failed-table td:last-child, .failed-table th:last-child { text-align: right; }
 .failed-table code { display: block; overflow: hidden; color: #68747e; font-size: 9px; text-overflow: ellipsis; }
-.failure-reason { overflow: hidden; text-overflow: ellipsis; }
+.failure-reason { display: block; width: 100%; overflow: hidden; border: 0; background: transparent; color: #59656f; padding: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.failure-reason:hover { color: #2e6f8e; text-decoration: underline; }
 .failed-table .button { padding: 7px 10px; }
 .severity { display: inline-flex; align-items: center; justify-content: center; min-width: 51px; border: 1px solid; border-radius: 4px; padding: 3px 6px; font-family: var(--mono); font-size: 9px; font-weight: 500; }
 .severity-debug { color: #687682; background: #f2f4f6; border-color: #dfe3e7; }

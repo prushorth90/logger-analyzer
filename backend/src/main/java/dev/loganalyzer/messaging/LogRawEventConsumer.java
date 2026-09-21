@@ -18,10 +18,13 @@ public class LogRawEventConsumer {
 
     private final LogEntryService logEntryService;
     private final ApplicationMetrics metrics;
+    private final DemoIngestionFailurePolicy demoFailurePolicy;
 
-    public LogRawEventConsumer(LogEntryService logEntryService, ApplicationMetrics metrics) {
+    public LogRawEventConsumer(LogEntryService logEntryService, ApplicationMetrics metrics,
+            DemoIngestionFailurePolicy demoFailurePolicy) {
         this.logEntryService = logEntryService;
         this.metrics = metrics;
+        this.demoFailurePolicy = demoFailurePolicy;
     }
 
     @KafkaListener(topics = LogIngestionPublisher.TOPIC)
@@ -36,6 +39,7 @@ public class LogRawEventConsumer {
                 if (event.schemaVersion() != LogRawEventV1.SCHEMA_VERSION) {
                     throw new IllegalArgumentException("Unsupported logs.raw schema version: " + event.schemaVersion());
                 }
+                demoFailurePolicy.failIfRequested(event);
                 LOGGER.info("Consuming log event eventId={} schemaVersion={}", event.eventId(), event.schemaVersion());
                 if (logEntryService.persist(event)) {
                     metrics.recordEndToEndIngestion(Duration.between(Instant.ofEpochMilli(record.timestamp()),

@@ -46,6 +46,7 @@ const SCENARIOS = {
 }
 
 const TRACE_DEMO_ID = 'demo-checkout-trace-001'
+const DLQ_DEMO_TRACE_ID = 'demo-dlq-trace-001'
 const TRACE_DEMO_EVENTS = [
   {
     offsetMs: 0,
@@ -173,6 +174,23 @@ export function createTraceDemoLogs(options, startedAt = new Date()) {
   }))
 }
 
+export function createDlqDemoLog(options, timestamp = new Date()) {
+  return {
+    timestamp: timestamp.toISOString(),
+    serviceName: 'dlq-demo-service',
+    environment: options.environment,
+    severity: 'ERROR',
+    message: 'Deterministic demo failure for Kafka retry and DLQ handling',
+    traceId: options.traceId ?? DLQ_DEMO_TRACE_ID,
+    host: 'dlq-demo-01',
+    metadata: {
+      scenario: 'dlq-demo',
+      demoFailure: 'retry-to-dlq',
+      operation: 'demonstrate retry and dead-letter handling',
+    },
+  }
+}
+
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 1) {
@@ -192,8 +210,8 @@ function parseArgs(args) {
 async function loadOptions(args, environment = process.env) {
   const input = parseArgs(args)
   const scenario = input.scenario ?? environment.LOG_SCENARIO ?? 'normal'
-  if (!SCENARIOS[scenario] && scenario !== 'trace-demo') {
-    throw new Error(`Unknown scenario '${scenario}'. Choose: ${[...Object.keys(SCENARIOS), 'trace-demo'].join(', ')}`)
+  if (!SCENARIOS[scenario] && scenario !== 'trace-demo' && scenario !== 'dlq-demo') {
+    throw new Error(`Unknown scenario '${scenario}'. Choose: ${[...Object.keys(SCENARIOS), 'trace-demo', 'dlq-demo'].join(', ')}`)
   }
 
   const requestsPerSecond = Number(input.rps ?? environment.LOG_RPS ?? 5)
@@ -228,7 +246,8 @@ async function loadOptions(args, environment = process.env) {
     requestsPerSecond,
     scenario,
     services,
-    traceId: input['trace-id'] ?? environment.LOG_TRACE_ID ?? TRACE_DEMO_ID,
+    traceId: input['trace-id'] ?? environment.LOG_TRACE_ID
+      ?? (scenario === 'dlq-demo' ? DLQ_DEMO_TRACE_ID : TRACE_DEMO_ID),
   }
 }
 
@@ -239,6 +258,8 @@ async function sendPayload(apiUrl, payload) {
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`)
+  const contentType = response.headers.get('content-type') ?? ''
+  return contentType.includes('application/json') ? response.json() : null
 }
 
 async function sendLog(options, elapsedSeconds) {
@@ -258,8 +279,19 @@ async function runTraceDemo(options) {
   return { sent, failed: 0 }
 }
 
+async function runDlqDemo(options) {
+  const log = createDlqDemoLog(options)
+  console.log(`Sending deterministic DLQ demo ${log.traceId} -> ${options.apiUrl}`)
+  const response = await sendPayload(options.apiUrl, log)
+  const eventId = response?.eventId ?? 'unknown'
+  console.log(`DLQ demo accepted: eventId=${eventId}, service=${log.serviceName}`)
+  console.log('Wait for configured retries, then open the Failed ingestion page.')
+  return { sent: 1, failed: 0, eventId }
+}
+
 export async function run(options) {
   if (options.scenario === 'trace-demo') return runTraceDemo(options)
+  if (options.scenario === 'dlq-demo') return runDlqDemo(options)
 
   const startedAt = Date.now()
   const pending = new Set()
@@ -310,8 +342,8 @@ function printHelp() {
 
 Options:
   --url URL                 API endpoint (default: http://127.0.0.1:8080/api/logs)
-  --scenario NAME           normal, warnings, database-timeouts, payment-failures, error-spike, trace-demo
-  --trace-id ID             Shared trace ID for trace-demo (default: demo-checkout-trace-001)
+  --scenario NAME           normal, warnings, database-timeouts, payment-failures, error-spike, trace-demo, dlq-demo
+  --trace-id ID             Shared trace ID for finite demo scenarios
   --services NAMES          Comma-separated service names
   --messages-file PATH      JSON file with DEBUG, INFO, WARN, and ERROR message arrays
   --environment NAME        Log environment (default: development)
