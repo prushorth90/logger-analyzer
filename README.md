@@ -303,9 +303,49 @@ LOG_SCENARIO=error-spike LOG_RPS=20 LOG_DURATION=60 \
   docker compose --profile generator up --build log-generator
 ```
 
-`LOG_DURATION=0` runs continuously until stopped. Configure services with `--services payment-service,order-service` or `LOG_SERVICES`; configure severity-specific text with `--messages-file tools/log-generator/messages.example.json`. Available scenarios are `normal`, `warnings`, `database-timeouts`, `payment-failures`, and `error-spike`. Run `node tools/log-generator/generator.js --help` for all CLI and environment options.
+`LOG_DURATION=0` runs continuously until stopped. Configure services with `--services payment-service,order-service` or `LOG_SERVICES`; configure severity-specific text with `--messages-file tools/log-generator/messages.example.json`. Available scenarios are `normal`, `warnings`, `database-timeouts`, `payment-failures`, `error-spike`, and the finite `trace-demo`. Run `node tools/log-generator/generator.js --help` for all CLI and environment options.
 
 Open the dashboard while traffic is running and use **Refresh** on the Overview or Logs page to see the latest data.
+
+### Generate the trace-correlation demo
+
+The finite `trace-demo` scenario posts exactly four events through the normal `POST /api/logs` endpoint, so they pass through Kafka, PostgreSQL persistence, live updates, and OpenSearch indexing. It uses one shared trace ID and a fixed service/message sequence with timestamps spaced 250 ms apart:
+
+```text
+api-gateway INFO
+  -> order-service INFO
+  -> payment-service ERROR
+  -> inventory-service INFO
+```
+
+With the Compose stack running, execute the one-shot demo service:
+
+```sh
+docker compose --profile demo run --rm trace-demo
+```
+
+Then open the trace sequence directly:
+
+http://localhost:3000/traces/demo-checkout-trace-001
+
+To use a different predictable ID for a recording, override it explicitly:
+
+```sh
+TRACE_DEMO_ID=recording-checkout-001 \
+  docker compose --profile demo run --rm trace-demo
+```
+
+The equivalent host command is:
+
+```sh
+node tools/log-generator/generator.js \
+  --scenario trace-demo \
+  --trace-id demo-checkout-trace-001 \
+  --environment demo \
+  --url http://127.0.0.1:8080/api/logs
+```
+
+The command exits after all four requests succeed and prints the trace ID. Reusing the same trace ID intentionally appends another four events to that correlated trace, so choose a fresh `TRACE_DEMO_ID` when a clean recording is needed.
 
 ## Operational Overview
 

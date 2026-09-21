@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import test from 'node:test'
 
-import { createLog, run } from './generator.js'
+import { createLog, createTraceDemoLogs, run } from './generator.js'
 
 const messages = {
   DEBUG: ['debug {operation}'],
@@ -58,6 +58,62 @@ test('run posts generated logs at the configured rate', async () => {
     assert.equal(requests.length, result.sent)
     assert.ok(requests.every(request => request.method === 'POST'))
     assert.ok(requests.every(request => request.body.serviceName === 'user-service'))
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  }
+})
+
+test('createTraceDemoLogs creates an ordered shared trace across four services', () => {
+  const startedAt = new Date('2026-09-20T12:00:00.000Z')
+  const logs = createTraceDemoLogs({ environment: 'demo', traceId: 'trace-recording-001' }, startedAt)
+
+  assert.deepEqual(logs.map(log => log.serviceName), [
+    'api-gateway',
+    'order-service',
+    'payment-service',
+    'inventory-service',
+  ])
+  assert.deepEqual(logs.map(log => log.timestamp), [
+    '2026-09-20T12:00:00.000Z',
+    '2026-09-20T12:00:00.250Z',
+    '2026-09-20T12:00:00.500Z',
+    '2026-09-20T12:00:00.750Z',
+  ])
+  assert.ok(logs.every(log => log.traceId === 'trace-recording-001'))
+  assert.equal(logs[2].severity, 'ERROR')
+  assert.equal(logs[2].serviceName, 'payment-service')
+  assert.deepEqual(logs.map(log => log.metadata.sequence), [1, 2, 3, 4])
+})
+
+test('trace-demo posts exactly four deterministic events and stops', async () => {
+  const requests = []
+  const server = createServer((request, response) => {
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => {
+      requests.push({ method: request.method, body: JSON.parse(body) })
+      response.writeHead(202).end()
+    })
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+
+  try {
+    const address = server.address()
+    const result = await run({
+      apiUrl: `http://127.0.0.1:${address.port}/api/logs`,
+      environment: 'demo',
+      scenario: 'trace-demo',
+      traceId: 'trace-recording-001',
+    })
+
+    assert.deepEqual(result, { sent: 4, failed: 0 })
+    assert.equal(requests.length, 4)
+    assert.ok(requests.every(request => request.method === 'POST'))
+    assert.ok(requests.every(request => request.body.traceId === 'trace-recording-001'))
+    assert.deepEqual(requests.map(request => request.body.serviceName), [
+      'api-gateway', 'order-service', 'payment-service', 'inventory-service',
+    ])
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   }

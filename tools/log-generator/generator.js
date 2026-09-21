@@ -45,6 +45,42 @@ const SCENARIOS = {
   'error-spike': { DEBUG: 6, INFO: 78, WARN: 12, ERROR: 4 },
 }
 
+const TRACE_DEMO_ID = 'demo-checkout-trace-001'
+const TRACE_DEMO_EVENTS = [
+  {
+    offsetMs: 0,
+    serviceName: 'api-gateway',
+    severity: 'INFO',
+    message: 'Checkout request accepted',
+    host: 'api-gateway-01',
+    operation: 'checkout request',
+  },
+  {
+    offsetMs: 250,
+    serviceName: 'order-service',
+    severity: 'INFO',
+    message: 'Order created and payment requested',
+    host: 'order-service-01',
+    operation: 'order creation',
+  },
+  {
+    offsetMs: 500,
+    serviceName: 'payment-service',
+    severity: 'ERROR',
+    message: 'Payment authorization failed after 3 attempts',
+    host: 'payment-service-01',
+    operation: 'payment authorization',
+  },
+  {
+    offsetMs: 750,
+    serviceName: 'inventory-service',
+    severity: 'INFO',
+    message: 'Inventory reservation released after payment failure',
+    host: 'inventory-service-01',
+    operation: 'stock release',
+  },
+]
+
 const OPERATIONS = {
   'payment-service': ['payment authorization', 'payment capture', 'refund'],
   'order-service': ['order creation', 'order fulfillment', 'order cancellation'],
@@ -120,6 +156,23 @@ export function createLog(options, elapsedSeconds = 0) {
   }
 }
 
+export function createTraceDemoLogs(options, startedAt = new Date()) {
+  return TRACE_DEMO_EVENTS.map((event, index) => ({
+    timestamp: new Date(startedAt.getTime() + event.offsetMs).toISOString(),
+    serviceName: event.serviceName,
+    environment: options.environment,
+    severity: event.severity,
+    message: event.message,
+    traceId: options.traceId ?? TRACE_DEMO_ID,
+    host: event.host,
+    metadata: {
+      scenario: 'trace-demo',
+      operation: event.operation,
+      sequence: index + 1,
+    },
+  }))
+}
+
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 1) {
@@ -139,8 +192,8 @@ function parseArgs(args) {
 async function loadOptions(args, environment = process.env) {
   const input = parseArgs(args)
   const scenario = input.scenario ?? environment.LOG_SCENARIO ?? 'normal'
-  if (!SCENARIOS[scenario]) {
-    throw new Error(`Unknown scenario '${scenario}'. Choose: ${Object.keys(SCENARIOS).join(', ')}`)
+  if (!SCENARIOS[scenario] && scenario !== 'trace-demo') {
+    throw new Error(`Unknown scenario '${scenario}'. Choose: ${[...Object.keys(SCENARIOS), 'trace-demo'].join(', ')}`)
   }
 
   const requestsPerSecond = Number(input.rps ?? environment.LOG_RPS ?? 5)
@@ -175,19 +228,39 @@ async function loadOptions(args, environment = process.env) {
     requestsPerSecond,
     scenario,
     services,
+    traceId: input['trace-id'] ?? environment.LOG_TRACE_ID ?? TRACE_DEMO_ID,
   }
 }
 
-async function sendLog(options, elapsedSeconds) {
-  const response = await fetch(options.apiUrl, {
+async function sendPayload(apiUrl, payload) {
+  const response = await fetch(apiUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(createLog(options, elapsedSeconds)),
+    body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`)
 }
 
+async function sendLog(options, elapsedSeconds) {
+  return sendPayload(options.apiUrl, createLog(options, elapsedSeconds))
+}
+
+async function runTraceDemo(options) {
+  const logs = createTraceDemoLogs(options)
+  console.log(`Sending deterministic trace demo ${logs[0].traceId} -> ${options.apiUrl}`)
+  let sent = 0
+  for (const log of logs) {
+    await sendPayload(options.apiUrl, log)
+    sent += 1
+    console.log(`${sent}/${logs.length} ${log.serviceName} ${log.severity}: ${log.message}`)
+  }
+  console.log(`Trace demo complete: ${sent} events, traceId=${logs[0].traceId}`)
+  return { sent, failed: 0 }
+}
+
 export async function run(options) {
+  if (options.scenario === 'trace-demo') return runTraceDemo(options)
+
   const startedAt = Date.now()
   const pending = new Set()
   let sent = 0
@@ -237,7 +310,8 @@ function printHelp() {
 
 Options:
   --url URL                 API endpoint (default: http://127.0.0.1:8080/api/logs)
-  --scenario NAME           normal, warnings, database-timeouts, payment-failures, error-spike
+  --scenario NAME           normal, warnings, database-timeouts, payment-failures, error-spike, trace-demo
+  --trace-id ID             Shared trace ID for trace-demo (default: demo-checkout-trace-001)
   --services NAMES          Comma-separated service names
   --messages-file PATH      JSON file with DEBUG, INFO, WARN, and ERROR message arrays
   --environment NAME        Log environment (default: development)

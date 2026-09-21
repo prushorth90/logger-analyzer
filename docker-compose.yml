@@ -1,6 +1,19 @@
 name: log-analyzer
 
 services:
+  trace-demo:
+    build:
+      context: ./tools/log-generator
+    profiles: ["demo"]
+    environment:
+      LOG_API_URL: http://backend:8080/api/logs
+      LOG_ENVIRONMENT: ${TRACE_DEMO_ENVIRONMENT:-demo}
+      LOG_SCENARIO: trace-demo
+      LOG_TRACE_ID: ${TRACE_DEMO_ID:-demo-checkout-trace-001}
+    depends_on:
+      backend:
+        condition: service_healthy
+
   log-generator:
     build:
       context: ./tools/log-generator
