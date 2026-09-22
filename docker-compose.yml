@@ -1,6 +1,20 @@
 name: log-analyzer
 
 services:
+  alert-demo:
+    build:
+      context: ./tools/log-generator
+    profiles: ["demo"]
+    environment:
+      LOG_API_URL: http://backend:8080/api/logs
+      LOG_ENVIRONMENT: ${ALERT_DEMO_ENVIRONMENT:-demo}
+      LOG_SCENARIO: alert-demo
+      LOG_TRACE_ID: ${ALERT_DEMO_TRACE_ID:-demo-payment-alert-001}
+      LOG_DEMO_COUNT: ${ALERT_DEMO_COUNT:-6}
+    depends_on:
+      backend:
+        condition: service_healthy
+
   dlq-demo:
     build:
       context: ./tools/log-generator

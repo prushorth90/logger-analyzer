@@ -47,6 +47,7 @@ const SCENARIOS = {
 
 const TRACE_DEMO_ID = 'demo-checkout-trace-001'
 const DLQ_DEMO_TRACE_ID = 'demo-dlq-trace-001'
+const ALERT_DEMO_TRACE_ID = 'demo-payment-alert-001'
 const TRACE_DEMO_EVENTS = [
   {
     offsetMs: 0,
@@ -191,6 +192,25 @@ export function createDlqDemoLog(options, timestamp = new Date()) {
   }
 }
 
+export function createAlertDemoLogs(options, startedAt = new Date()) {
+  const count = options.demoCount ?? 6
+  return Array.from({ length: count }, (_, index) => ({
+    timestamp: new Date(startedAt.getTime() + index * 100).toISOString(),
+    serviceName: 'payment-service',
+    environment: options.environment,
+    severity: 'ERROR',
+    message: `Demo payment authorization failure ${index + 1} of ${count}`,
+    traceId: options.traceId ?? ALERT_DEMO_TRACE_ID,
+    host: 'payment-service-demo-01',
+    metadata: {
+      scenario: 'alert-demo',
+      operation: 'payment authorization',
+      sequence: index + 1,
+      burstSize: count,
+    },
+  }))
+}
+
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 1) {
@@ -210,14 +230,18 @@ function parseArgs(args) {
 async function loadOptions(args, environment = process.env) {
   const input = parseArgs(args)
   const scenario = input.scenario ?? environment.LOG_SCENARIO ?? 'normal'
-  if (!SCENARIOS[scenario] && scenario !== 'trace-demo' && scenario !== 'dlq-demo') {
-    throw new Error(`Unknown scenario '${scenario}'. Choose: ${[...Object.keys(SCENARIOS), 'trace-demo', 'dlq-demo'].join(', ')}`)
+  if (!SCENARIOS[scenario] && scenario !== 'trace-demo' && scenario !== 'dlq-demo' && scenario !== 'alert-demo') {
+    throw new Error(`Unknown scenario '${scenario}'. Choose: ${[...Object.keys(SCENARIOS), 'trace-demo', 'dlq-demo', 'alert-demo'].join(', ')}`)
   }
 
   const requestsPerSecond = Number(input.rps ?? environment.LOG_RPS ?? 5)
   const durationSeconds = Number(input.duration ?? environment.LOG_DURATION ?? 0)
   if (!Number.isFinite(requestsPerSecond) || requestsPerSecond <= 0) throw new Error('RPS must be greater than zero')
   if (!Number.isFinite(durationSeconds) || durationSeconds < 0) throw new Error('Duration must be zero or greater')
+  const demoCount = Number(input.count ?? environment.LOG_DEMO_COUNT ?? 6)
+  if (!Number.isInteger(demoCount) || demoCount < 1 || demoCount > 100) {
+    throw new Error('Demo count must be an integer between 1 and 100')
+  }
 
   const services = (input.services ?? environment.LOG_SERVICES ?? DEFAULT_SERVICES.join(','))
     .split(',').map(value => value.trim()).filter(Boolean)
@@ -246,8 +270,10 @@ async function loadOptions(args, environment = process.env) {
     requestsPerSecond,
     scenario,
     services,
+    demoCount,
     traceId: input['trace-id'] ?? environment.LOG_TRACE_ID
-      ?? (scenario === 'dlq-demo' ? DLQ_DEMO_TRACE_ID : TRACE_DEMO_ID),
+      ?? (scenario === 'dlq-demo' ? DLQ_DEMO_TRACE_ID
+        : scenario === 'alert-demo' ? ALERT_DEMO_TRACE_ID : TRACE_DEMO_ID),
   }
 }
 
@@ -289,9 +315,22 @@ async function runDlqDemo(options) {
   return { sent: 1, failed: 0, eventId }
 }
 
+async function runAlertDemo(options) {
+  const logs = createAlertDemoLogs(options)
+  console.log(`Sending deterministic payment ERROR burst (${logs.length} events) -> ${options.apiUrl}`)
+  for (const [index, log] of logs.entries()) {
+    await sendPayload(options.apiUrl, log)
+    console.log(`${index + 1}/${logs.length} ${log.serviceName} ${log.severity}: ${log.message}`)
+  }
+  console.log(`Alert demo complete: ${logs.length} events, traceId=${logs[0].traceId}`)
+  console.log('Wait for the scheduled alert evaluator, then open the Alerts page.')
+  return { sent: logs.length, failed: 0 }
+}
+
 export async function run(options) {
   if (options.scenario === 'trace-demo') return runTraceDemo(options)
   if (options.scenario === 'dlq-demo') return runDlqDemo(options)
+  if (options.scenario === 'alert-demo') return runAlertDemo(options)
 
   const startedAt = Date.now()
   const pending = new Set()
@@ -342,8 +381,9 @@ function printHelp() {
 
 Options:
   --url URL                 API endpoint (default: http://127.0.0.1:8080/api/logs)
-  --scenario NAME           normal, warnings, database-timeouts, payment-failures, error-spike, trace-demo, dlq-demo
+  --scenario NAME           normal, warnings, database-timeouts, payment-failures, error-spike, trace-demo, dlq-demo, alert-demo
   --trace-id ID             Shared trace ID for finite demo scenarios
+  --count NUMBER            Event count for alert-demo (default: 6, max: 100)
   --services NAMES          Comma-separated service names
   --messages-file PATH      JSON file with DEBUG, INFO, WARN, and ERROR message arrays
   --environment NAME        Log environment (default: development)

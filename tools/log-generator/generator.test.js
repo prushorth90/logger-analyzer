@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import test from 'node:test'
 
-import { createDlqDemoLog, createLog, createTraceDemoLogs, run } from './generator.js'
+import { createAlertDemoLogs, createDlqDemoLog, createLog, createTraceDemoLogs, run } from './generator.js'
 
 const messages = {
   DEBUG: ['debug {operation}'],
@@ -159,6 +159,58 @@ test('dlq-demo posts exactly one event and prints the accepted event ID', async 
     assert.deepEqual(result, { sent: 1, failed: 0, eventId: 'demo-event-id' })
     assert.equal(requests.length, 1)
     assert.equal(requests[0].metadata.demoFailure, 'retry-to-dlq')
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  }
+})
+
+test('createAlertDemoLogs creates six ordered payment ERROR events', () => {
+  const logs = createAlertDemoLogs(
+    { demoCount: 6, environment: 'demo', traceId: 'demo-alert-test-001' },
+    new Date('2026-09-20T12:00:00.000Z'),
+  )
+
+  assert.equal(logs.length, 6)
+  assert.ok(logs.every(log => log.serviceName === 'payment-service'))
+  assert.ok(logs.every(log => log.severity === 'ERROR'))
+  assert.ok(logs.every(log => log.traceId === 'demo-alert-test-001'))
+  assert.deepEqual(logs.map(log => log.timestamp), [
+    '2026-09-20T12:00:00.000Z',
+    '2026-09-20T12:00:00.100Z',
+    '2026-09-20T12:00:00.200Z',
+    '2026-09-20T12:00:00.300Z',
+    '2026-09-20T12:00:00.400Z',
+    '2026-09-20T12:00:00.500Z',
+  ])
+  assert.deepEqual(logs.map(log => log.metadata.sequence), [1, 2, 3, 4, 5, 6])
+})
+
+test('alert-demo posts exactly six events and stops', async () => {
+  const requests = []
+  const server = createServer((request, response) => {
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => {
+      requests.push(JSON.parse(body))
+      response.writeHead(202).end()
+    })
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+
+  try {
+    const address = server.address()
+    const result = await run({
+      apiUrl: `http://127.0.0.1:${address.port}/api/logs`,
+      demoCount: 6,
+      environment: 'demo',
+      scenario: 'alert-demo',
+      traceId: 'demo-alert-test-001',
+    })
+
+    assert.deepEqual(result, { sent: 6, failed: 0 })
+    assert.equal(requests.length, 6)
+    assert.ok(requests.every(log => log.serviceName === 'payment-service' && log.severity === 'ERROR'))
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   }

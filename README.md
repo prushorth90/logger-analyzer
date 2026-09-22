@@ -69,6 +69,8 @@ Defaults work without an environment file. To override them, create a root `.env
 | `LOG_INGESTION_RETRY_INTERVAL` | `2s` |
 | `DEMO_INGESTION_FAILURES_ENABLED` | `true` in Compose |
 | `DLQ_DEMO_TRACE_ID` | `demo-dlq-trace-001` |
+| `ALERT_DEMO_TRACE_ID` | `demo-payment-alert-001` |
+| `ALERT_DEMO_COUNT` | `6` |
 
 For a port conflict, choose a free host port, for example:
 
@@ -265,6 +267,39 @@ Alert lifecycle:
 
 The backend exposes `GET` and `POST /api/alerts/rules`, `PATCH /api/alerts/rules/{id}/active`, paginated `GET /api/alerts`, and `POST /api/alerts/{id}/acknowledge|resolve`. Alerts are currently visible only in the React Alerts page; email, paging, and other external notifications are deliberately out of scope.
 
+#### Generate the alert-rule demo
+
+The finite `alert-demo` generator posts six deterministic `ERROR` logs for `payment-service` through the normal `POST /api/logs` → Kafka → PostgreSQL path. It does not create a rule or alert directly and exits after all six requests succeed.
+
+For a recording, open http://localhost:3000/alerts and create this rule in the UI:
+
+| Field | Demo value |
+| --- | --- |
+| Rule name | `Payment service demo errors` |
+| Service | `payment-service` |
+| Error count over | `5` |
+| Window | `5` minutes |
+| Cooldown | `5` minutes |
+
+The condition is strictly greater than the threshold, so the six-event burst crosses a threshold of five. After the rule is active, run:
+
+```sh
+docker compose --profile demo run --rm alert-demo
+```
+
+The equivalent host command is:
+
+```sh
+node tools/log-generator/generator.js \
+  --scenario alert-demo \
+  --count 6 \
+  --trace-id demo-payment-alert-001 \
+  --environment demo \
+  --url http://127.0.0.1:8080/api/logs
+```
+
+The normal evaluator runs every 30 seconds, so allow up to about 30 seconds after the generator exits, then click **Refresh** on the Alerts page. An `OPEN` alert should appear with an observed count of at least six. Click **Acknowledge** to show the `ACKNOWLEDGED` state, then **Resolve** to demonstrate operator resolution. The configured five-minute cooldown still applies; rerunning the burst during cooldown does not create another alert. Without manual resolution, the evaluator resolves the alert after the five-minute log window clears.
+
 Indexing is asynchronous, so a newly persisted log can briefly appear in PostgreSQL-backed listings before it appears in text search. If OpenSearch is unavailable, PostgreSQL data remains intact, but text search and new projection updates are unavailable until OpenSearch recovers.
 
 ### Retries and dead-letter handling
@@ -342,7 +377,7 @@ LOG_SCENARIO=error-spike LOG_RPS=20 LOG_DURATION=60 \
   docker compose --profile generator up --build log-generator
 ```
 
-`LOG_DURATION=0` runs continuously until stopped. Configure services with `--services payment-service,order-service` or `LOG_SERVICES`; configure severity-specific text with `--messages-file tools/log-generator/messages.example.json`. Available scenarios are `normal`, `warnings`, `database-timeouts`, `payment-failures`, `error-spike`, and the finite `trace-demo`. Run `node tools/log-generator/generator.js --help` for all CLI and environment options.
+`LOG_DURATION=0` runs continuously until stopped. Configure services with `--services payment-service,order-service` or `LOG_SERVICES`; configure severity-specific text with `--messages-file tools/log-generator/messages.example.json`. Available scenarios are `normal`, `warnings`, `database-timeouts`, `payment-failures`, `error-spike`, and the finite `trace-demo`, `dlq-demo`, and `alert-demo` modes. Run `node tools/log-generator/generator.js --help` for all CLI and environment options.
 
 Open the dashboard while traffic is running and use **Refresh** on the Overview or Logs page to see the latest data.
 
